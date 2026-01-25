@@ -1,12 +1,14 @@
 version: '3.8'
 
 services:
-  userbot:
+  bot:
     build: .
-    container_name: telegram_userbot
+    container_name: pr_userbot
     restart: always
     volumes:
+      # 1. Привязываем файл сессии (Вход) к серверу
+      - ./user_session.session:/app/user_session.session
+      # 2. Привязываем базу данных (Чаты) к серверу
       - ./app/data:/app/app/data
-      - ./app/user_session.session:/app/app/user_session.session
     env_file:
       - .env
