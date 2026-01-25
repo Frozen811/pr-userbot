@@ -1,10 +1,10 @@
-# --- НАСТРОЙКИ (Твой Дроплет) ---
-$ServerIP = "46.101.251.219"      # Твой IP
-$BotPath = "/root/pr-userbot"     # Путь на сервере
-$Branch = "main"                  # Твоя ветка (main или master)
-# --------------------------------
+# --- НАСТРОЙКИ ---
+$ServerIP = "46.101.251.219"
+$BotPath = "/root/pr-userbot"
+$Branch = "main"
+# -----------------
 
-# 1. Отправляем изменения на GitHub (Локально)
+# 1. GitHub Push
 Write-Host ">>> 1. Pushing to GitHub..." -ForegroundColor Cyan
 git add .
 git commit -m "Auto-deploy update"
@@ -15,16 +15,13 @@ if ($LASTEXITCODE -ne 0) {
     exit
 }
 
-# 2. Обновляем сервер + Docker Build (Удаленно)
-Write-Host ">>> 2. Connecting to Droplet $ServerIP (Docker Deploy)..." -ForegroundColor Cyan
+# 2. Server Update + Docker Restart
+Write-Host ">>> 2. Connecting to Droplet (Docker)..." -ForegroundColor Cyan
 
-# Логика:
-# 1. cd -> идем в папку
-# 2. git pull -> качаем код
-# 3. docker-compose down -> останавливаем старый контейнер (чтобы освободить файл сессии)
-# 4. docker-compose up -d --build -> собираем и запускаем новый
+# Мы используем 'docker compose' (новый стандарт) или 'docker-compose' (старый).
+# Эта команда: заходит в папку -> качает код -> пересобирает контейнер в фоне
 $RemoteCommands = "cd $BotPath && git pull origin $Branch && docker-compose down && docker-compose up -d --build"
 
 ssh root@$ServerIP $RemoteCommands
 
-Write-Host ">>> DONE! Docker container rebuilt and started." -ForegroundColor Green
+Write-Host ">>> DONE! Bot is updated and running in Docker." -ForegroundColor Green
