@@ -1,10 +1,4 @@
-telethon
-qrcode
+pyrogram
+# tgcrypto  <-- Commented out because it fails to build on Python 3.14 Windows. It is optional.
 python-dotenv
-pytz
-fastapi
-uvicorn
-jinja2
-python-multipart
-aiofiles
-aiosqlite
+qrcode
