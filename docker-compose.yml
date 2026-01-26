@@ -5,10 +5,10 @@ services:
     build: .
     container_name: telegram_userbot
     restart: always
-    stdin_open: true # Keep stdin open for interaction (like QR code)
-    tty: true        # Allocate a pseudo-TTY
+    stdin_open: true
+    tty: true
     volumes:
       - ./app/data:/app/app/data
-      - ./app/user_session.session:/app/app/user_session.session
+      - ./sessions:/app/sessions  # New volume for session files
     env_file:
       - .env

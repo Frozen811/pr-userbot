@@ -22,20 +22,19 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-SESSION_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "user_session")
 
 # --- Globals & Events ---
-# asyncio.Event is a more reliable way to start/stop loops instantly
 broadcast_event = asyncio.Event() 
-# This will hold the background task, so we can manage it
 broadcast_task = None
 
 # --- Database & Initialization ---
 init_db()
 
 # --- Pyrogram Client Initialization ---
+# Explicitly set a workdir for sessions to avoid path issues in Docker
 app = Client(
-    SESSION_PATH, 
+    "user_session", 
+    workdir="/app/sessions",  # All session files will be stored here
     api_id=API_ID, 
     api_hash=API_HASH,
     device_model="Desktop PC",
@@ -103,7 +102,6 @@ async def cmd_stop(client, message):
 async def broadcast_loop():
     logger.info("Broadcast loop initialized.")
     while True:
-        # This will pause the loop here until .start is used
         await broadcast_event.wait() 
         
         logger.info("Starting new broadcast cycle.")
@@ -148,7 +146,6 @@ async def broadcast_loop():
                 logger.error(f"Unexpected error sending to {chat_id}: {e}")
                 failed_count += 1
 
-        # Cycle report
         if sent_count > 0 or failed_count > 0:
             report = f"📊 **Cycle Done**\n- Sent: {sent_count}\n- Failed: {failed_count}"
             logger.info(report)
@@ -168,16 +165,14 @@ async def main():
     me = await app.get_me()
     logger.info(f"Logged in as {me.first_name} ({me.username})")
 
-    # Start the broadcast loop as a background task
     broadcast_task = asyncio.create_task(broadcast_loop())
     
-    # Check DB status on startup and set the event
     if get_status():
         broadcast_event.set()
         logger.info("Broadcasting was enabled on startup. Resuming...")
     
     logger.info("UserBot is running. Use commands in 'Saved Messages'.")
-    await idle() # Keep the client running
+    await idle()
 
 async def shutdown():
     logger.info("Shutting down...")
@@ -192,8 +187,6 @@ if __name__ == '__main__':
     except (KeyboardInterrupt, SystemExit):
         logger.info("Shutdown signal received.")
     finally:
-        # Ensure graceful shutdown on Ctrl+C or other exit signals
-        # This is a bit tricky with asyncio, but we can try
         if app.is_initialized:
             asyncio.run(shutdown())
         logger.info("Shutdown complete.")
