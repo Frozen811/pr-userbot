@@ -32,10 +32,64 @@ def log(message):
 SESSION_PATH = 'sessions/user_session' # Telethon adds .session automatically
 TZ_KYIV = timezone('Europe/Kyiv')
 
+def get_delay_and_mode(now_kyiv):
+    hour = now_kyiv.hour
+    weekday = now_kyiv.weekday() # 0=Mon, 6=Sun
+
+    # Weekdays (Mon=0 to Fri=4)
+    if 0 <= weekday <= 4:
+        if 7 <= hour < 14:
+            return random.randint(60, 120), "Light"
+        elif 14 <= hour < 22:
+            return random.randint(30, 60), "Normal"
+        else:
+            return None, "Sleep"
+
+    # Weekends (Sat=5, Sun=6)
+    else:
+        if 7 <= hour < 12:
+            return random.randint(60, 120), "Light"
+        elif 12 <= hour < 24:
+             return random.randint(30, 60), "Normal"
+        else:
+            return None, "Sleep"
+
 # --- Client Init ---
 client = TelegramClient(SESSION_PATH, config.API_ID, config.API_HASH)
 
 # --- Commands ---
+
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.setmedia(.*)'))
+async def cmd_setmedia(event):
+    args = event.pattern_match.group(1).strip()
+
+    if args == 'clear':
+        current_path = await database.get_media_path()
+        if current_path and os.path.exists(current_path):
+            try:
+                os.remove(current_path)
+            except:
+                pass
+        await database.set_media_path("")
+        await event.edit("🗑 Media removed.")
+        log("Media removed by user.")
+        return
+
+    reply = await event.get_reply_message()
+    if not reply or not reply.media:
+        await event.edit("⚠️ Reply to a photo/video with `.setmedia`")
+        return
+
+    await event.edit("📥 Downloading media...")
+    try:
+        # Download to app/data/broadcast_media (Telethon adds extension)
+        path = await reply.download_media(file='app/data/broadcast_media')
+        await database.set_media_path(path)
+        await event.edit("✅ Media saved!")
+        log(f"Media set: {path}")
+    except Exception as e:
+        await event.edit(f"❌ Error: {e}")
+        logger.error(f"Media download error: {e}")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.add'))
 async def cmd_add(event):
@@ -142,7 +196,7 @@ async def on_new_reply(event):
 
 async def broadcast_loop():
     logger.info("Starting broadcast loop...")
-    session_counter = 0 # Counter for "Coffee breaks"
+    session_counter = 0
 
     while True:
         try:
@@ -151,28 +205,31 @@ async def broadcast_loop():
                 await asyncio.sleep(5)
                 continue
 
-            # Night Mode Check
+            # Schedule & Mode Check
             now_kyiv = datetime.now(TZ_KYIV)
-            if now_kyiv.hour >= 23 or now_kyiv.hour < 7:
-                log(f"🌙 Night Mode active (Kyiv {now_kyiv.strftime('%H:%M')}). Sleeping 1h...")
+            delay_seconds, mode = get_delay_and_mode(now_kyiv)
+
+            if mode == "Sleep":
+                log(f"🌙 Sleep Mode active (Kyiv {now_kyiv.strftime('%H:%M')}). Sleeping 1h...")
                 await asyncio.sleep(3600)
                 continue
 
             # Check Limit
             daily_limit = settings['daily_limit']
-            total_sent_today = int(await database.get_stat('daily_sent') or 0)
 
-            # Reset counter if new day (simplified check: update this logic if strictly needed,
-            # ideally store 'last_reset_date' in stats and check against it)
+            # Reset Check
             last_reset_str = await database.get_stat('last_reset_date')
             today_str = now_kyiv.strftime('%Y-%m-%d')
+
             if last_reset_str != today_str:
                 await database.update_stat('daily_sent', "0")
                 await database.update_stat('last_reset_date', today_str)
-                total_sent_today = 0
+                log(f"📅 New day! Daily limit reset. ({today_str})")
+
+            total_sent_today = int(await database.get_stat('daily_sent') or 0)
 
             if total_sent_today >= daily_limit:
-                log("🛑 Daily limit reached. Sleeping until tomorrow...")
+                log(f"🛑 Daily limit reached ({daily_limit}). Sleeping until tomorrow...")
                 await asyncio.sleep(3600)
                 continue
 
@@ -183,31 +240,54 @@ async def broadcast_loop():
                 await asyncio.sleep(60)
                 continue
 
-            # Shuffle for randomness
-            active_chats = [c for c in chats if c['status'] != 'error'] # Retry muted ones differently if needed
+            active_chats = [c for c in chats if c['status'] != 'error']
             random.shuffle(active_chats)
 
-            consecutive_errors = 0 # Circuit Breaker counter
+            consecutive_errors = 0
 
+            # Process chats
             for chat_row in active_chats:
+                # Re-check settings/mode/limit inside loop for responsiveness
                 settings = await database.get_settings()
                 if not settings['is_running']:
                     break
 
+                # Check mode again (e.g. if hour changed)
+                now_kyiv = datetime.now(TZ_KYIV)
+                delay_seconds, mode = get_delay_and_mode(now_kyiv)
+                if mode == "Sleep":
+                    break # Break inner loop to go to outer loop sleep
+
                 chat_id = chat_row['chat_id']
                 chat_title = chat_row['chat_title']
 
-                # Check Mute/Slowmode status
+                # Check Mute logic
                 if chat_row['next_run_at']:
-                    next_run = datetime.fromisoformat(chat_row['next_run_at'])
-                    if datetime.now() < next_run:
-                        # Skip silently or log debug
-                        continue
-                    else:
-                        # Clear mute status
-                        await database.update_chat_status(chat_id, 'active', None, None)
+                    # Aiosqlite might return string or ints depending on logic, let's parse safely
+                    next_run_val = chat_row['next_run_at']
+                    if next_run_val:
+                        try:
+                            # It is stored as TIMESTAMP which usually comes back as string e.g., "2023-..." or int
+                            if isinstance(next_run_val, str):
+                                next_run = datetime.fromisoformat(next_run_val)
+                            elif isinstance(next_run_val, (int, float)):
+                                next_run = datetime.fromtimestamp(next_run_val)
+                            else:
+                                next_run = next_run_val # already datetime?
 
-                # Send Message
+                            # Ensure timezone awareness if needed, but safe comparison:
+                            # If next_run is naive, use naive now. If aware, use aware now.
+                            # Standardize to naive UTC or local for comparison
+                            current_dt = datetime.now(next_run.tzinfo) if next_run.tzinfo else datetime.now()
+
+                            if current_dt < next_run:
+                                continue
+                            else:
+                                # Unmute
+                                await database.update_chat_status(chat_id, 'active', None, None)
+                        except Exception as e:
+                            logger.error(f"Date parse error for {chat_id}: {e}")
+
                 template = settings['message_template']
                 if not template:
                     log("⚠️ No message template set!")
@@ -216,16 +296,26 @@ async def broadcast_loop():
 
                 text = spintax.process_spintax(template)
 
+                # Get Media
+                media_path = await database.get_media_path()
+                has_media = False
+                if media_path and os.path.exists(media_path):
+                    has_media = True
+
                 try:
                     log(f"📢 Processing: {chat_title}")
 
-                    # 1. Safety: Mark chat as read (Human behavior)
+                    # 1. Human-Like: Mark as Read
                     await client.send_read_acknowledge(chat_id)
 
                     async with client.action(chat_id, 'typing'):
                         await asyncio.sleep(random.randint(2, 5))
 
-                    await client.send_message(chat_id, text)
+                    if has_media:
+                        await client.send_message(chat_id, text, file=media_path)
+                    else:
+                        await client.send_message(chat_id, text)
+
                     log(f"✅ Sent to: {chat_title}")
 
                     # Update Stats
@@ -234,70 +324,65 @@ async def broadcast_loop():
                     await database.update_stat('daily_sent', total_sent_today)
                     await database.update_stat('total_sent', total_sent_all)
 
-                    consecutive_errors = 0 # Reset error counter on success
+                    consecutive_errors = 0
 
-                    # 2. Safety: Coffee Break (Long pause every 20-35 messages)
+                    # 2. Coffee Break
                     session_counter += 1
                     if session_counter % random.randint(20, 35) == 0:
-                        long_sleep = random.randint(300, 900) # 5 to 15 minutes
-                        log(f"☕ Taking a coffee break (Safety Pause) for {long_sleep//60} mins...")
+                        long_sleep = random.randint(300, 900)
+                        log(f"☕ Coffee break for {long_sleep//60} mins...")
                         await asyncio.sleep(long_sleep)
 
-                    # GC
                     gc.collect()
 
-                    # Sleep
-                    sleep_time = random.randint(30, 60)
-                    log(f"⏳ Sleeping {sleep_time}s...")
-                    await asyncio.sleep(sleep_time)
+                    # 3. Schedule Delay
+                    log(f"⏳ Sleeping {delay_seconds}s ({mode} Mode)...")
+                    await asyncio.sleep(delay_seconds)
 
                 except FloodWaitError as e:
                     log(f"🌊 FLOOD WAIT: Sleeping {e.seconds}s")
                     await asyncio.sleep(e.seconds)
 
                 except (PeerIdInvalidError, ChatWriteForbiddenError, UserBannedInChannelError) as e:
-                    log(f"❌ Banned/Invalid ({chat_title}). Removing...")
-                    # await database.remove_chat(chat_id)
-                    # Instead of removing, mark as error so user can see in dashboard
-                    await database.update_chat_status(chat_id, 'error', last_error=str(e))
-                    consecutive_errors += 1
+                    log(f"❌ Banned/Invalid ({chat_title}). Deleting...")
+                    # Auto-Leave
                     try:
                         await client.delete_dialog(chat_id)
                     except:
                         pass
+                    # Delete from DB
+                    await database.remove_chat(chat_id)
+                    consecutive_errors += 1
 
                 except SlowModeWaitError as e:
                     log(f"🐌 Slowmode ({chat_title}): Wait {e.seconds}s")
+                    # Smart Slowmode: Mute, don't delete
                     next_run = datetime.now().timestamp() + e.seconds + 5
-                    # Convert to isoformat for storage? or just store timestamp?
-                    # DB schema says TIMESTAMP. SQLite handles logic.
-                    # Python datetime object is safer for aiosqlite adapters usually.
+                    # Store as ISO string for SQLite
                     next_run_dt = datetime.fromtimestamp(next_run)
                     await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error=f"Slowmode {e.seconds}s")
 
                 except ChatRestrictedError:
                     log(f"🔇 Restricted ({chat_title}). Muting for 2h.")
-                    # Mute for 2 hours default
                     next_run = datetime.now().timestamp() + 7200
                     next_run_dt = datetime.fromtimestamp(next_run)
                     await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error="Restricted")
 
                 except Exception as e:
                     log(f"⚠️ Error sending to {chat_title}: {e}")
-                    await database.update_chat_status(chat_id, 'active', last_error=str(e)) # Keep active but log error
+                    await database.update_chat_status(chat_id, 'active', last_error=str(e))
                     consecutive_errors += 1
                     await asyncio.sleep(5)
 
-                # 3. Safety: Circuit Breaker (Stop if too many errors in a row)
                 if consecutive_errors >= 5:
-                    log("🚨 Too many consecutive errors (5)! Emergency safety sleep for 60 mins...")
+                    log("🚨 Too many consecutive errors! Safety sleep 60 mins...")
                     await asyncio.sleep(3600)
                     consecutive_errors = 0
                     break
 
-            # End of cycle sleep (Randomized 25-45 mins)
+            # End of list sleep
             cycle_sleep = random.randint(1500, 2700)
-            log(f"End of broadcast cycle. Sleeping {cycle_sleep//60} mins...")
+            log(f"End of list. Sleeping {cycle_sleep//60} mins...")
             await asyncio.sleep(cycle_sleep)
 
         except Exception as e:

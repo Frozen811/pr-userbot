@@ -120,4 +120,10 @@ async def get_stat(key: str):
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute('SELECT value FROM stats WHERE key = ?', (key,)) as cursor:
             row = await cursor.fetchone()
-            return row[0] if row else "0"
+            return row[0] if row else None
+
+async def set_media_path(path: str):
+    await update_stat('media_path', path)
+
+async def get_media_path():
+    return await get_stat('media_path')
