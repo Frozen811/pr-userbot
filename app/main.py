@@ -1,292 +1,217 @@
+import os
 import asyncio
 import logging
 import random
-import os
-import sys
 import gc
 from datetime import datetime, timedelta
-from pytz import timezone
+import pytz
+from telethon import TelegramClient, events
+from telethon.errors import ChatWriteForbiddenError, SlowModeWaitError, ChatRestrictedError
+from dotenv import load_dotenv
+from app import database, web_server
 
-# Install and import libraries
-try:
-    from telethon import TelegramClient, events, errors
-    import qrcode
-except ImportError:
-    print("Installing requirements...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "telethon", "qrcode", "python-dotenv", "pytz", "fastapi", "uvicorn", "jinja2", "python-multipart", "aiofiles", "aiosqlite"])
-    from telethon import TelegramClient, events, errors
-    import qrcode
+# Настройка
+load_dotenv()
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+SESSION_NAME = "user_session"
+TZ = pytz.timezone('Europe/Kyiv')
 
-from app import config, database, spintax, web_server
+# Логирование
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("pr_userbot")
 
-# -----------------------------------------------------------------------------
-# CONSTANTS
-# -----------------------------------------------------------------------------
-KYIV_TZ = timezone('Europe/Kyiv')
+client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
 
-# -----------------------------------------------------------------------------
-# LOGGING SETUP
-# -----------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
 
-# Pipe logs to Web Interface
-class WebQueueHandler(logging.Handler):
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            web_server.add_log(msg)
-        except:
-            pass
+async def log(text):
+    """Отправляет лог в консоль, на сайт и в Telegram канал"""
+    # 1. Время для лога
+    timestamp = datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+    full_text = f"[{timestamp}] {text}"
 
-web_handler = WebQueueHandler()
-web_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(web_handler)
+    # 2. В консоль
+    print(full_text)
 
-# -----------------------------------------------------------------------------
-# TELEGRAM CLIENT SETUP
-# -----------------------------------------------------------------------------
-SESSION_PATH = os.path.join(os.path.dirname(__file__), 'user_session')
+    # 3. В Веб-админку (в память)
+    if "logs" in web_server.bot_state:
+        web_server.bot_state["logs"].append(full_text)
+        if len(web_server.bot_state["logs"]) > 100:
+            web_server.bot_state["logs"].pop(0)
 
-client = TelegramClient(
-    SESSION_PATH,
-    config.API_ID,
-    config.API_HASH
-)
-
-async def check_auth():
-    """Auth using QR Login."""
-    await client.connect()
-    if not await client.is_user_authorized():
-        qr_login = await client.qr_login()
-        qr = qrcode.QRCode()
-        qr.add_data(qr_login.url)
-        qr.print_ascii(invert=True)
-        logger.info("Scan the QR Code to login.")
-        await qr_login.wait()
-        logger.info("Login successful!")
-    else:
-        logger.info("Session loaded. Login successful!")
-
-async def log_to_channel(text):
-    """Optional remote logging."""
+    # 4. В Телеграм канал (если задан в настройках)
     try:
         settings = await database.get_settings()
-        chan_id = settings.get('log_channel_id')
-        if chan_id:
-            await client.send_message(chan_id, f"ℹ️ {text}")
-    except:
+        log_channel = settings.get('log_channel_id')
+        if log_channel:
+            await client.send_message(int(log_channel), text)
+    except Exception:
         pass
 
-# -----------------------------------------------------------------------------
-# BROADCAST LOGIC
-# -----------------------------------------------------------------------------
+
 async def broadcast_loop():
-    logger.info("Broadcast Monitor: Started.")
+    """Главный цикл рассылки"""
+    await log("🚀 Broadcast loop started. Waiting for tasks...")
+
     while True:
         try:
+            # Обновляем uptime для сайта
+            web_server.bot_state["uptime"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+            # 1. Получаем настройки из БД
             settings = await database.get_settings()
-            if not settings.get('is_running'):
-                await asyncio.sleep(5)
+            DAILY_LIMIT = int(settings.get('daily_limit', 400))
+            BROADCAST_TEXT = settings.get('broadcast_text', "Привет! Настрой текст через .set")
+
+            # Обновляем статистику на сайте
+            total = await database.get_stat('total_sent')
+            web_server.bot_state["total_sent"] = int(total) if total else 0
+
+            # 2. Проверяем ВРЕМЯ (Киев)
+            now = datetime.now(TZ)
+            hour = now.hour
+            is_weekend = now.weekday() >= 5
+
+            # --- НОЧНОЙ РЕЖИМ (С 22:00 до 07:00) ---
+            if hour >= 22 or hour < 7:
+                await log(f"🌙 Night Mode ({hour}:00). Sleeping 30 mins...")
+                await asyncio.sleep(1800)  # Спим 30 минут
                 continue
 
-            # Check Timezone (Sleep at night)
-            now = datetime.now(KYIV_TZ)
-            if now.hour >= 23 or now.hour < 7:
-                 logger.info(f"🌙 Night Mode ({now.strftime('%H:%M')}). Sleeping 1h.")
-                 await asyncio.sleep(3600)
-                 continue
+            # --- ЛАЙТ РЕЖИМ (Утро) ---
+            # Будни: до 14:00, Выходные: до 12:00
+            if (hour < 14 and not is_weekend) or (hour < 12 and is_weekend):
+                delay_range = (60, 120)  # Медленно
+                mode_name = "Light 🌤"
+            else:
+                delay_range = (30, 60)  # Быстро
+                mode_name = "Normal 🚀"
 
-            # Check Limits
-            limit = settings.get('daily_limit', 400)
-            daily_sent = int(await database.get_stat('daily_sent', '0'))
-            today_str = now.strftime("%Y-%m-%d")
-            last_reset = await database.get_stat('last_reset_date')
-
-            if last_reset != today_str:
-                await database.set_stat('daily_sent', 0)
-                await database.set_stat('last_reset_date', today_str)
-                daily_sent = 0
-                logger.info("Stats: Daily limit reset.")
-
-            if daily_sent >= limit:
-                logger.warning(f"Stats: 🛑 Daily Limit Reached ({limit}). Pausing 1h.")
-                await asyncio.sleep(3600)
-                continue
-
-            # Get Content
+            # 3. Получаем чаты
             chats = await database.get_chats()
-            template = settings.get('message_template', '')
-            media_path = await database.get_media()
-
-            if not chats or not template:
-                await asyncio.sleep(60)
+            if not chats:
+                await log("⚠️ No chats in DB. Add some via .add! Sleeping 5 mins.")
+                await asyncio.sleep(300)
                 continue
 
-            logger.info(f"Broadcast: Scanning {len(chats)} chats...")
+            # 4. Рассылка по списку
+            sent_in_cycle = 0
 
             for chat in chats:
-                # Refresh status check inside loop
-                settings = await database.get_settings()
-                if not settings.get('is_running'): break
-
                 chat_id = chat['chat_id']
-                chat_title = chat['chat_title']
-                status = chat.get('status', 'active')
-                next_run_val = chat.get('next_run_at')
+                chat_name = chat['chat_name']
 
-                # SMART HANDLING: Check Status & Timer
-                if status == 'error':
-                    continue
+                # Проверка Mute/Slowmode
+                if chat['next_run_at']:
+                    unlock_time = datetime.fromisoformat(chat['next_run_at'])
+                    if datetime.now() < unlock_time:
+                        continue  # Рано писать
+                    else:
+                        await database.update_chat_status(chat_id, "active")  # Разбан
 
-                if next_run_val:
-                    try:
-                        next_run_dt = datetime.fromisoformat(next_run_val)
-                        if datetime.now() < next_run_dt:
-                            # Too early
-                            continue
-                        else:
-                            # Timer expired, un-mute in DB if needed, but we just proceed
-                            pass
-                    except ValueError:
-                        pass # Ignore parsing errors
-
-                logger.info(f"📢 Processing: {chat_title}")
-                text = spintax.process_spintax(template)
+                # Проверка лимита
+                current_daily = web_server.bot_state.get("daily_sent", 0)
+                if current_daily >= DAILY_LIMIT:
+                    await log("🛑 Daily limit reached. Sleeping until tomorrow...")
+                    await asyncio.sleep(3600)
+                    break
 
                 try:
-                    await client.send_read_acknowledge(chat_id)
-                    async with client.action(chat_id, 'typing'):
-                        await asyncio.sleep(random.randint(2, 5))
+                    await client.send_read_acknowledge(chat_id)  # Читаем
+                    await client.send_message(chat_id, BROADCAST_TEXT)  # Пишем
 
-                    if media_path and os.path.exists(media_path):
-                        await client.send_message(chat_id, text, file=media_path)
-                    else:
-                        await client.send_message(chat_id, text)
+                    # Успех
+                    sent_in_cycle += 1
+                    current_total = web_server.bot_state["total_sent"] + 1
+                    web_server.bot_state["total_sent"] = current_total
+                    # Тут можно добавить логику счетчика на сегодня, пока просто +1
+                    web_server.bot_state["daily_sent"] = web_server.bot_state.get("daily_sent", 0) + 1
 
-                    await database.increment_stat('total_sent')
-                    await database.increment_stat('daily_sent')
+                    await database.update_stat('total_sent', current_total)
 
-                    # Success: Reset status
-                    await database.update_chat_status(chat_id, 'active', next_run_at=None, last_error=None)
-                    logger.info(f"✅ Sent to {chat_title}")
+                    await log(f"✅ [{mode_name}] Sent to: {chat_name}")
+                    gc.collect()  # Чистим память
 
-                    gc.collect()
+                    # Пауза между сообщениями
+                    sleep_time = random.randint(*delay_range)
+                    await asyncio.sleep(sleep_time)
 
-                    await asyncio.sleep(random.randint(20, 50))
-
-                except errors.FloodWaitError as e:
-                    logger.warning(f"🌊 FLOOD WAIT: {e.seconds}s")
-                    await asyncio.sleep(e.seconds)
-
-                except errors.SlowModeWaitError as e:
-                    wait_sec = e.seconds + 5
-                    logger.warning(f"🐢 Slowmode: {wait_sec}s")
-                    next_run = datetime.now() + timedelta(seconds=wait_sec)
-                    await database.update_chat_status(chat_id, 'muted', next_run_at=next_run.isoformat())
-
-                except errors.ChatWriteForbiddenError:
-                    logger.error(f"🚫 BANNED in {chat_title}. Leaving.")
+                except ChatWriteForbiddenError:
+                    await log(f"🚫 Banned in {chat_name}. Deleting.")
                     await database.remove_chat(chat_id)
                     try:
                         await client.delete_dialog(chat_id)
                     except:
                         pass
 
-                except errors.ChatRestrictedError:
-                    logger.warning(f"🤐 Restricted/Muted in {chat_title}. Pausing 2h.")
-                    next_run = datetime.now() + timedelta(hours=2)
-                    await database.update_chat_status(chat_id, 'muted', next_run_at=next_run.isoformat())
+                except SlowModeWaitError as e:
+                    wait_sec = e.seconds + 10
+                    unlock = datetime.now() + timedelta(seconds=wait_sec)
+                    await log(f"⏳ Slowmode {chat_name}: {wait_sec}s")
+                    await database.update_chat_status(chat_id, "muted", next_run_at=unlock.isoformat(),
+                                                      last_error=f"Slow {wait_sec}s")
+
+                except ChatRestrictedError:
+                    unlock = datetime.now() + timedelta(hours=2)
+                    await log(f"🔇 Muted {chat_name}. Skip 2h.")
+                    await database.update_chat_status(chat_id, "muted", next_run_at=unlock.isoformat(),
+                                                      last_error="Muted")
 
                 except Exception as e:
-                    logger.error(f"❌ Error in {chat_title}: {e}")
-                    await database.update_chat_status(chat_id, 'error', last_error=str(e))
+                    await log(f"❌ Error {chat_name}: {e}")
+                    await database.update_chat_status(chat_id, "error", last_error=str(e))
 
-            logger.info("Cycle finished. Sleeping 30m.")
-            await asyncio.sleep(1800)
+            # Конец круга
+            if sent_in_cycle > 0:
+                await log(f"🏁 Cycle finished. Sent: {sent_in_cycle}. Sleeping 20 mins...")
+                await asyncio.sleep(1200)
+            else:
+                await log("💤 No active chats or nothing sent. Sleeping 5 mins...")
+                await asyncio.sleep(300)
 
         except Exception as e:
-            logger.critical(f"Loop Error: {e}", exc_info=True)
+            # Если ошибка в самом цикле — пишем её и не падаем!
+            await log(f"🔥 CRITICAL LOOP ERROR: {e}")
             await asyncio.sleep(60)
 
-# -----------------------------------------------------------------------------
-# TELEGRAM COMMANDS
-# -----------------------------------------------------------------------------
-@client.on(events.NewMessage(outgoing=True))
-async def handler(event):
-    msg = event.message.message
-    if not msg.startswith('.'): return
 
+# --- КОМАНДЫ ---
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.set (.+)'))
+async def set_text(event):
+    text = event.pattern_match.group(1)
+    await database.update_stat('broadcast_text', text)
+    await event.edit("✅ Text updated in DB!")
+
+
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.add'))
+async def add_chat_cmd(event):
     chat = await event.get_chat()
-    chat_id = chat.id
-    chat_title = getattr(chat, 'title', 'Unknown')
+    if await database.add_chat(chat.id, chat.title):
+        await event.edit(f"✅ Added: {chat.title}")
+    else:
+        await event.edit("⚠️ Already added.")
 
-    if msg == '.add':
-        if await database.add_chat(chat_id, chat_title):
-            await event.edit(f"✅ Saved: {chat_title}")
-        else:
-            await event.edit("⚠️ Already saved.")
 
-    elif msg == '.del':
-        await database.remove_chat(chat_id)
-        await event.edit("🗑 Removed.")
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.stats'))
+async def stats_cmd(event):
+    total = await database.get_stat('total_sent')
+    chats = await database.get_chats()
+    await event.edit(f"📊 **Stats:**\nChats: {len(chats)}\nTotal Sent: {total or 0}")
 
-    elif msg == '.list':
-        chats = await database.get_chats()
-        await event.edit(f"📋 Saved Chats: {len(chats)}")
 
-    elif msg == '.start':
-        await database.update_settings(running=True)
-        await event.edit("🚀 Started")
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.setlog'))
+async def set_log_cmd(event):
+    await database.update_stat('log_channel_id', event.chat_id)
+    await event.edit(f"✅ Log Channel Set: {event.chat.title}")
 
-    elif msg == '.stop':
-        await database.update_settings(running=False)
-        await event.edit("🛑 Stopped")
 
-    elif msg.startswith('.set '):
-        txt = msg[5:]
-        await database.update_settings(template=txt)
-        await event.edit("📝 Template saved.")
-
-    elif msg == '.setmedia':
-        reply = await event.get_reply_message()
-        if reply and reply.media:
-            path = os.path.join(os.path.dirname(__file__), 'data', 'media.jpg')
-            await client.download_media(reply, file=path)
-            await database.set_media(path)
-            await event.edit("🖼 Media saved.")
-        else:
-            await event.edit("❌ Reply to a media.")
-
-# -----------------------------------------------------------------------------
-# MAIN
-# -----------------------------------------------------------------------------
 async def main():
-    # 1. Init DB
     await database.init_db()
-
-    # 2. Start Telethon
-    await check_auth()
-
-    # 3. Start Web Server
+    await client.start()
     asyncio.create_task(web_server.run_server())
-    logger.info("🌍 Web Admin running on port 8080")
-
-    # 4. Start Broadcast Loop
     asyncio.create_task(broadcast_loop())
-
-    # 5. Run Forever
-    logger.info("Bot is running...")
     await client.run_until_disconnected()
 
+
 if __name__ == '__main__':
-    if sys.platform == 'win32':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    asyncio.run(main())
+    client.loop.run_until_complete(main())
