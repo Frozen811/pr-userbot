@@ -1,132 +1,83 @@
-import aiosqlite
+import sqlite3
 import os
-from datetime import datetime
 
-# Путь к базе данных
-DB_PATH = "app/data/bot.db"
+DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'bot.db')
 
-
-async def init_db():
-    """Инициализация базы и миграции"""
+def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            message_template TEXT,
+            is_running BOOLEAN DEFAULT 0
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chats (
+            chat_id INTEGER PRIMARY KEY
+        )
+    ''')
+    
+    # Initialize settings if not present
+    cursor.execute('SELECT count(*) FROM settings')
+    if cursor.fetchone()[0] == 0:
+        cursor.execute('INSERT INTO settings (id, message_template, is_running) VALUES (1, "", 0)')
+    
+    conn.commit()
+    conn.close()
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        # 1. Таблица чатов
-        await db.execute("""
-                         CREATE TABLE IF NOT EXISTS chats
-                         (
-                             chat_id
-                             INTEGER
-                             PRIMARY
-                             KEY,
-                             chat_name
-                             TEXT,
-                             status
-                             TEXT
-                             DEFAULT
-                             'active',
-                             next_run_at
-                             TIMESTAMP,
-                             last_error
-                             TEXT
-                         )
-                         """)
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-        # 2. Таблица настроек/статистики
-        # (Удаляем старую, если она была кривая)
-        await db.execute("DROP TABLE IF EXISTS stats")
-        await db.execute("""
-                         CREATE TABLE stats
-                         (
-                             key   TEXT PRIMARY KEY,
-                             value TEXT
-                         )
-                         """)
+def get_template():
+    conn = get_db_connection()
+    row = conn.execute('SELECT message_template FROM settings WHERE id = 1').fetchone()
+    conn.close()
+    return row['message_template'] if row else ""
 
-        # 3. Устанавливаем дефолтные настройки (если их нет)
-        await db.execute("INSERT OR IGNORE INTO stats (key, value) VALUES ('daily_limit', '400')")
-        await db.execute(
-            "INSERT OR IGNORE INTO stats (key, value) VALUES ('broadcast_text', 'Привет! Настрой меня через админку.')")
-        await db.execute("INSERT OR IGNORE INTO stats (key, value) VALUES ('total_sent', '0')")
+def set_template(template):
+    conn = get_db_connection()
+    conn.execute('UPDATE settings SET message_template = ? WHERE id = 1', (template,))
+    conn.commit()
+    conn.close()
 
-        # 4. МИГРАЦИЯ ЧАТОВ
-        cursor = await db.execute("PRAGMA table_info(chats)")
-        columns_info = await cursor.fetchall()
-        columns = [col[1] for col in columns_info]
+def get_status():
+    conn = get_db_connection()
+    row = conn.execute('SELECT is_running FROM settings WHERE id = 1').fetchone()
+    conn.close()
+    return bool(row['is_running']) if row else False
 
-        if "status" not in columns:
-            print("🛠 Migrating DB: Adding 'status' column...")
-            await db.execute("ALTER TABLE chats ADD COLUMN status TEXT DEFAULT 'active'")
+def set_status(is_running):
+    conn = get_db_connection()
+    conn.execute('UPDATE settings SET is_running = ? WHERE id = 1', (is_running,))
+    conn.commit()
+    conn.close()
 
-        if "next_run_at" not in columns:
-            print("🛠 Migrating DB: Adding 'next_run_at' column...")
-            await db.execute("ALTER TABLE chats ADD COLUMN next_run_at TIMESTAMP")
+def add_chat(chat_id):
+    conn = get_db_connection()
+    try:
+        conn.execute('INSERT INTO chats (chat_id) VALUES (?)', (chat_id,))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
 
-        if "last_error" not in columns:
-            print("🛠 Migrating DB: Adding 'last_error' column...")
-            await db.execute("ALTER TABLE chats ADD COLUMN last_error TEXT")
+def remove_chat(chat_id):
+    conn = get_db_connection()
+    conn.execute('DELETE FROM chats WHERE chat_id = ?', (chat_id,))
+    conn.commit()
+    conn.close()
 
-        await db.commit()
-
-
-async def add_chat(chat_id, chat_name):
-    async with aiosqlite.connect(DB_PATH) as db:
-        try:
-            await db.execute("""
-                             INSERT
-                             OR IGNORE INTO chats (chat_id, chat_name, status) 
-                VALUES (?, ?, 'active')
-                             """, (chat_id, chat_name))
-            await db.commit()
-            return True
-        except Exception:
-            return False
-
-
-async def get_chats():
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM chats")
-        return await cursor.fetchall()
-
-
-async def remove_chat(chat_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM chats WHERE chat_id = ?", (chat_id,))
-        await db.commit()
-
-
-async def update_chat_status(chat_id, status, next_run_at=None, last_error=None):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-                         UPDATE chats
-                         SET status      = ?,
-                             next_run_at = ?,
-                             last_error  = ?
-                         WHERE chat_id = ?
-                         """, (status, next_run_at, last_error, chat_id))
-        await db.commit()
-
-
-async def update_stat(key, value):
-    """Обновить одну настройку"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT OR REPLACE INTO stats (key, value) VALUES (?, ?)", (key, str(value)))
-        await db.commit()
-
-
-async def get_stat(key):
-    """Получить одну настройку"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT value FROM stats WHERE key = ?", (key,))
-        row = await cursor.fetchone()
-        return row[0] if row else None
-
-
-async def get_settings():
-    """Получить ВСЕ настройки словарем (ВОТ ЭТОЙ ФУНКЦИИ НЕ ХВАТАЛО)"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT key, value FROM stats")
-        rows = await cursor.fetchall()
-        # Превращаем [('limit', '400'), ...] в {'limit': '400', ...}
-        return {row[0]: row[1] for row in rows}
+def get_chats():
+    conn = get_db_connection()
+    chats = conn.execute('SELECT chat_id FROM chats').fetchall()
+    conn.close()
+    return [chat['chat_id'] for chat in chats]
