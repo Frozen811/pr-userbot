@@ -11,7 +11,8 @@ import gc
 from telethon import TelegramClient, events
 from telethon.errors import (
     FloodWaitError, PeerIdInvalidError, ChatWriteForbiddenError,
-    SlowModeWaitError, ChatRestrictedError, UserBannedInChannelError
+    SlowModeWaitError, ChatRestrictedError, UserBannedInChannelError,
+    SessionPasswordNeededError
 )
 
 from app import config, database, web_server, spintax
@@ -275,6 +276,14 @@ async def main():
             print("Scan above!")
             await qr_login.wait()
             print("Logged in!")
+        except SessionPasswordNeededError:
+            print("Two-step verification enabled. Trying password...")
+            if config.PASSWORD:
+                await client.sign_in(password=config.PASSWORD)
+                print("Logged in with password!")
+            else:
+                print("ERROR: 2FA is enabled but 'PASSWORD' is missing in .env!")
+                return
         except Exception as e:
             print(f"Login failed: {e}")
             return
