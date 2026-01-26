@@ -19,8 +19,8 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ">>> 2. Connecting to Droplet (Docker)..." -ForegroundColor Cyan
 
 # Мы используем 'docker compose' (новый стандарт) или 'docker-compose' (старый).
-# Эта команда: заходит в папку -> качает код -> пересобирает контейнер в фоне
-$RemoteCommands = "cd $BotPath && git pull origin $Branch && docker-compose down && docker-compose up -d --build"
+# Эта команда: заходит в папку -> очищает старую сессию -> качает код -> пересобирает контейнер
+$RemoteCommands = "cd $BotPath && rm -f sessions/user_session.session && git pull origin $Branch && docker-compose down && docker-compose up -d --build"
 
 ssh root@$ServerIP $RemoteCommands
 
