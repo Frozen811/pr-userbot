@@ -3,6 +3,7 @@ import logging
 import random
 import os
 import sys
+import qrcode
 
 # Fix for Pyrogram's "There is no current event loop" error on import
 try:
@@ -31,10 +32,9 @@ broadcast_task = None
 init_db()
 
 # --- Pyrogram Client Initialization ---
-# Explicitly set a workdir for sessions to avoid path issues in Docker
 app = Client(
     "user_session", 
-    workdir="/app/sessions",  # All session files will be stored here
+    workdir="/app/sessions",
     api_id=API_ID, 
     api_hash=API_HASH,
     device_model="Desktop PC",
@@ -81,7 +81,7 @@ async def cmd_list(client, message):
 async def cmd_start(client, message):
     set_status(True)
     if not broadcast_event.is_set():
-        broadcast_event.set() # This "wakes up" the loop
+        broadcast_event.set()
         logger.info("Broadcasting started by user.")
         await message.edit("🚀 **Sending started!**")
     else:
@@ -91,7 +91,7 @@ async def cmd_start(client, message):
 async def cmd_stop(client, message):
     set_status(False)
     if broadcast_event.is_set():
-        broadcast_event.clear() # This "pauses" the loop
+        broadcast_event.clear()
         logger.info("Broadcasting stopped by user.")
         await message.edit("🛑 **Sending stopped!**")
     else:
@@ -161,7 +161,25 @@ async def broadcast_loop():
 async def main():
     global broadcast_task
     
-    await app.start()
+    # Check if session exists by trying to connect
+    try:
+        is_authorized = await app.connect()
+    except Exception as e:
+        logger.error(f"Connection error: {e}")
+        return
+
+    if not is_authorized:
+        logger.info("Session not found. Generating QR Code...")
+        try:
+            # This generates and prints the QR code to the terminal
+            user = await app.authorize()
+            logger.info(f"Login successful! User: {user.first_name}")
+        except Exception as e:
+            logger.error(f"Login failed: {e}")
+            return
+    else:
+        logger.info("Session found. Logging in...")
+
     me = await app.get_me()
     logger.info(f"Logged in as {me.first_name} ({me.username})")
 
