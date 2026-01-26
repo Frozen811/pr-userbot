@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Telethon Bot Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .log-box {
+            background-color: #121212;
+            color: #0d6efd;
+            font-family: 'Courier New', monospace;
+            padding: 15px;
+            height: 400px;
+            overflow-y: scroll;
+            border: 1px solid #333;
+            border-radius: 5px;
+        }
+        .status-badge { width: 80px; }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary mb-4">
+      <div class="container">
+        <a class="navbar-brand text-primary fw-bold" href="/">🤖 PR-UserBot</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="nav">
+          <ul class="navbar-nav ms-auto">
+            <li class="nav-item"><a class="nav-link {% if tab == 'dashboard' %}active{% endif %}" href="/">Dashboard</a></li>
+            <li class="nav-item"><a class="nav-link {% if tab == 'logs' %}active{% endif %}" href="/logs">Logs</a></li>
+            <li class="nav-item"><a class="nav-link {% if tab == 'chats' %}active{% endif %}" href="/chats">Chats</a></li>
+            <li class="nav-item"><a class="nav-link {% if tab == 'config' %}active{% endif %}" href="/config">Config</a></li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container">
+
+      <!-- DASHBOARD -->
+      {% if tab == 'dashboard' %}
+      <div class="row g-4">
+        <div class="col-md-3">
+            <div class="card text-center bg-dark border-secondary">
+                <div class="card-body">
+                    <h6 class="text-muted text-uppercase">Total Sent</h6>
+                    <h2 class="display-6 fw-bold text-success">{{ stats.total_sent }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center bg-dark border-secondary">
+                <div class="card-body">
+                    <h6 class="text-muted text-uppercase">Today</h6>
+                    <h2 class="display-6 fw-bold text-info">{{ stats.daily_sent }} / {{ limit }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center bg-dark border-secondary">
+                <div class="card-body">
+                    <h6 class="text-muted text-uppercase">Active Chats</h6>
+                    <h2 class="display-6 fw-bold text-light">{{ active_chats_count }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center bg-dark border-secondary">
+                <div class="card-body">
+                    <h6 class="text-muted text-uppercase">Errors</h6>
+                    <h2 class="display-6 fw-bold text-danger">{{ error_chats_count }}</h2>
+                </div>
+            </div>
+        </div>
+      </div>
+
+      <div class="mt-5">
+        <h4 class="mb-3">System Status</h4>
+        <ul class="list-group list-group-flush bg-dark border border-secondary rounded">
+            <li class="list-group-item bg-dark text-light border-secondary">Start Date: <span class="float-end">{{ stats.start_date }}</span></li>
+            <li class="list-group-item bg-dark text-light border-secondary">Total DB Chats: <span class="float-end">{{ total_chats_count }}</span></li>
+        </ul>
+      </div>
+      {% endif %}
+
+      <!-- LOGS -->
+      {% if tab == 'logs' %}
+      <div class="d-flex justify-content-between align-items-center mb-3">
+          <h3>📜 Live Logs</h3>
+          <a href="/logs" class="btn btn-outline-light btn-sm">Refresh</a>
+      </div>
+      <div class="log-box" id="logs">
+          {% for log in logs %}
+          <div>{{ log }}</div>
+          {% endfor %}
+      </div>
+      <script>
+        var objDiv = document.getElementById("logs");
+        objDiv.scrollTop = objDiv.scrollHeight;
+      </script>
+      {% endif %}
+
+      <!-- CHATS -->
+      {% if tab == 'chats' %}
+      <h3>💬 Chat Management</h3>
+      <div class="table-responsive mt-3">
+          <table class="table table-dark table-hover align-middle">
+              <thead>
+                  <tr class="text-secondary">
+                      <th>ID</th>
+                      <th>Name</th>
+                      <th>Status</th>
+                      <th>Next Run</th>
+                      <th>Last Error</th>
+                      <th>Action</th>
+                  </tr>
+              </thead>
+              <tbody>
+                  {% for chat in chats %}
+                  <tr>
+                      <td>{{ chat.chat_id }}</td>
+                      <td>{{ chat.chat_title }}</td>
+                      <td>
+                        {% if chat.status == 'active' %}
+                        <span class="badge bg-success status-badge">Active</span>
+                        {% elif chat.status == 'muted' %}
+                        <span class="badge bg-warning text-dark status-badge">Muted</span>
+                        {% elif chat.status == 'error' %}
+                        <span class="badge bg-danger status-badge">Error</span>
+                        {% else %}
+                        <span class="badge bg-secondary status-badge">{{ chat.status }}</span>
+                        {% endif %}
+                      </td>
+                      <td><small>{{ chat.next_run_at if chat.next_run_at else '-' }}</small></td>
+                      <td class="text-danger small">{{ chat.last_error if chat.last_error }}</td>
+                      <td>
+                        <form action="/chats/delete" method="POST" onsubmit="return confirm('Permanently delete {{ chat.chat_title }}?');">
+                            <input type="hidden" name="chat_id" value="{{ chat.chat_id }}">
+                            <button class="btn btn-sm btn-outline-danger">Delete</button>
+                        </form>
+                      </td>
+                  </tr>
+                  {% endfor %}
+              </tbody>
+          </table>
+      </div>
+      {% endif %}
+
+      <!-- CONFIG -->
+      {% if tab == 'config' %}
+      <h3>⚙️ Configuration</h3>
+      <div class="card bg-dark border-secondary mt-3">
+          <div class="card-body">
+              <form action="/config/update" method="POST">
+                  <div class="mb-3">
+                      <label class="form-label">Broadcast Message Template (Spintax)</label>
+                      <textarea name="message_template" class="form-control bg-black text-light border-secondary" rows="6">{{ config.message_template }}</textarea>
+                  </div>
+                  <div class="mb-3">
+                      <label class="form-label">Daily Limit</label>
+                      <input type="number" name="daily_limit" class="form-control bg-black text-light border-secondary" value="{{ config.daily_limit }}">
+                  </div>
+                  <button class="btn btn-primary">Save Changes</button>
+              </form>
+          </div>
+      </div>
+      {% endif %}
+
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>

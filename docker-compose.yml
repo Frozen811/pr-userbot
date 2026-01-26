@@ -12,3 +12,5 @@ services:
       - ./app/data:/app/app/data
     env_file:
       - .env
+    ports:
+      - "8080:80"

@@ -1,195 +1,186 @@
-import sqlite3
+import aiosqlite
 import os
+import logging
+from datetime import datetime
 
-# Define the database path
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'bot.db')
+logger = logging.getLogger(__name__)
 
-def get_connection():
-    """Create a database connection and return it."""
+async def get_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+    conn = await aiosqlite.connect(DB_PATH)
+    conn.row_factory = aiosqlite.Row
     return conn
 
-def init_db():
-    """Initialize the database tables."""
-    conn = get_connection()
-    cursor = conn.cursor()
+async def init_db():
+    """Initialize DB and perform safe migrations."""
+    async with await get_db() as db:
+        # 1. Chats Table
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS chats (
+                chat_id INTEGER PRIMARY KEY,
+                chat_title TEXT
+            )
+        ''')
 
-    # Create chats table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS chats (
-            chat_id INTEGER PRIMARY KEY,
-            chat_title TEXT
-        )
-    ''')
+        # MIGRATION: Check columns for chats
+        async with db.execute("PRAGMA table_info(chats)") as cursor:
+            columns = [row['name'] for row in await cursor.fetchall()]
 
-    # Create settings table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS settings (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            message_template TEXT DEFAULT '',
-            is_running BOOLEAN DEFAULT 0,
-            log_channel_id INTEGER DEFAULT 0
-        )
-    ''')
+        if 'status' not in columns:
+            await db.execute("ALTER TABLE chats ADD COLUMN status TEXT DEFAULT 'active'")
+            logger.info("DB Migration: Added 'status' column to chats.")
 
-    # Create media table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS media (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            file_path TEXT DEFAULT ''
-        )
-    ''')
+        if 'next_run_at' not in columns:
+            await db.execute("ALTER TABLE chats ADD COLUMN next_run_at TIMESTAMP")
+            logger.info("DB Migration: Added 'next_run_at' column to chats.")
 
-    # Create stats table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS stats (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            total_sent INTEGER DEFAULT 0,
-            daily_sent INTEGER DEFAULT 0,
-            last_reset_date TEXT DEFAULT '',
-            start_date TEXT DEFAULT ''
-        )
-    ''')
+        if 'last_error' not in columns:
+            await db.execute("ALTER TABLE chats ADD COLUMN last_error TEXT")
+            logger.info("DB Migration: Added 'last_error' column to chats.")
 
-    # Ensure default settings exist
-    cursor.execute('SELECT count(*) FROM settings')
-    if cursor.fetchone()[0] == 0:
-        cursor.execute('INSERT INTO settings (id, message_template, is_running, log_channel_id) VALUES (1, "", 0, 0)')
-    else:
-        # Migration for existing settings to add log_channel_id if missing
-        # Simple check: try to select log_channel_id, if fails, add column
+        # 2. Settings Table
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                message_template TEXT DEFAULT '',
+                is_running BOOLEAN DEFAULT 0,
+                log_channel_id INTEGER DEFAULT 0,
+                daily_limit INTEGER DEFAULT 400
+            )
+        ''')
+
+        # Ensure default settings
+        async with db.execute("SELECT count(*) FROM settings") as cursor:
+            count = (await cursor.fetchone())[0]
+            if count == 0:
+                await db.execute("INSERT INTO settings (id) VALUES (1)")
+
+        # MIGRATION: Settings
+        async with db.execute("PRAGMA table_info(settings)") as cursor:
+            cols = [row['name'] for row in await cursor.fetchall()]
+
+        if 'daily_limit' not in cols:
+            await db.execute("ALTER TABLE settings ADD COLUMN daily_limit INTEGER DEFAULT 400")
+
+        # 3. Media Table
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS media (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                file_path TEXT DEFAULT ''
+            )
+        ''')
+        async with db.execute("SELECT count(*) FROM media") as cursor:
+            if (await cursor.fetchone())[0] == 0:
+                await db.execute("INSERT INTO media (id) VALUES (1)")
+
+        # 4. Stats Table
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS stats (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+        # Initialize default stats if missing
+        defaults = {
+            'total_sent': '0',
+            'daily_sent': '0',
+            'last_reset_date': datetime.now().strftime("%Y-%m-%d"),
+            'start_date': datetime.now().strftime("%Y-%m-%d")
+        }
+        for k, v in defaults.items():
+            await db.execute("INSERT OR IGNORE INTO stats (key, value) VALUES (?, ?)", (k, v))
+
+        await db.commit()
+        logger.info("Database initialized and migrated safely.")
+
+# --- DATA ACCESS METHODS ---
+
+async def add_chat(chat_id, chat_title):
+    async with await get_db() as db:
         try:
-             cursor.execute('SELECT log_channel_id FROM settings')
-        except sqlite3.OperationalError:
-             cursor.execute('ALTER TABLE settings ADD COLUMN log_channel_id INTEGER DEFAULT 0')
+            await db.execute("INSERT INTO chats (chat_id, chat_title) VALUES (?, ?)", (chat_id, chat_title))
+            await db.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
 
-    # Ensure default media row exists
-    cursor.execute('SELECT count(*) FROM media')
-    if cursor.fetchone()[0] == 0:
-        cursor.execute('INSERT INTO media (id, file_path) VALUES (1, "")')
+async def remove_chat(chat_id):
+    async with await get_db() as db:
+        await db.execute("DELETE FROM chats WHERE chat_id = ?", (chat_id,))
+        await db.commit()
 
-    # Ensure default stats row exists
-    cursor.execute('SELECT count(*) FROM stats')
-    if cursor.fetchone()[0] == 0:
-        from datetime import datetime
-        now = datetime.now().strftime("%Y-%m-%d")
-        cursor.execute('INSERT INTO stats (id, total_sent, daily_sent, last_reset_date, start_date) VALUES (1, 0, 0, ?, ?)', (now, now))
+async def get_chats():
+    async with await get_db() as db:
+        async with db.execute("SELECT * FROM chats") as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
-    conn.commit()
-    conn.close()
+async def update_chat_status(chat_id, status, next_run_at=None, last_error=None):
+    async with await get_db() as db:
+        query = "UPDATE chats SET status = ?"
+        params = [status]
+        if next_run_at is not None:
+            query += ", next_run_at = ?"
+            params.append(next_run_at)
+        if last_error is not None:
+            query += ", last_error = ?"
+            params.append(last_error)
 
-# Initialize on module load or manually
-init_db()
+        query += " WHERE chat_id = ?"
+        params.append(chat_id)
 
-def add_chat(chat_id, chat_title):
-    """Add a chat ID to the database. Returns True if added, False if already exists."""
-    conn = get_connection()
-    try:
-        conn.execute('INSERT INTO chats (chat_id, chat_title) VALUES (?, ?)', (chat_id, chat_title))
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
-    finally:
-        conn.close()
+        await db.execute(query, tuple(params))
+        await db.commit()
 
-def remove_chat(chat_id):
-    """Remove a chat ID from the database."""
-    conn = get_connection()
-    conn.execute('DELETE FROM chats WHERE chat_id = ?', (chat_id,))
-    conn.commit()
-    conn.close()
+async def get_settings():
+    async with await get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM settings WHERE id = 1") as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else {}
 
-def get_chats():
-    """Return a list of all chats as dictionaries with id and title."""
-    conn = get_connection()
-    rows = conn.execute('SELECT chat_id, chat_title FROM chats').fetchall()
-    conn.close()
-    return [{'id': row['chat_id'], 'title': row['chat_title']} for row in rows]
+async def update_settings(template=None, limit=None, running=None, log_channel=None):
+    async with await get_db() as db:
+        if template is not None:
+            await db.execute("UPDATE settings SET message_template = ? WHERE id = 1", (template,))
+        if limit is not None:
+            await db.execute("UPDATE settings SET daily_limit = ? WHERE id = 1", (limit,))
+        if running is not None:
+            await db.execute("UPDATE settings SET is_running = ? WHERE id = 1", (1 if running else 0,))
+        if log_channel is not None:
+            await db.execute("UPDATE settings SET log_channel_id = ? WHERE id = 1", (log_channel,))
+        await db.commit()
 
-def set_template(text):
-    """Update the message template."""
-    conn = get_connection()
-    conn.execute('UPDATE settings SET message_template = ? WHERE id = 1', (text,))
-    conn.commit()
-    conn.close()
+async def get_media():
+    async with await get_db() as db:
+        async with db.execute("SELECT file_path FROM media WHERE id = 1") as cursor:
+            row = await cursor.fetchone()
+            return row['file_path'] if row else ""
 
-def get_template():
-    """Get the current message template."""
-    conn = get_connection()
-    row = conn.execute('SELECT message_template FROM settings WHERE id = 1').fetchone()
-    conn.close()
-    return row['message_template'] if row else ""
+async def set_media(path):
+    async with await get_db() as db:
+        await db.execute("UPDATE media SET file_path = ? WHERE id = 1", (path,))
+        await db.commit()
 
-def set_status(is_running):
-    """Set the running status (True/False)."""
-    conn = get_connection()
-    val = 1 if is_running else 0
-    conn.execute('UPDATE settings SET is_running = ? WHERE id = 1', (val,))
-    conn.commit()
-    conn.close()
+# --- STATS METHODS ---
 
-def get_status():
-    """Get the running status."""
-    conn = get_connection()
-    row = conn.execute('SELECT is_running FROM settings WHERE id = 1').fetchone()
-    conn.close()
-    return bool(row['is_running']) if row else False
+async def get_stat(key, default='0'):
+    async with await get_db() as db:
+        async with db.execute("SELECT value FROM stats WHERE key = ?", (key,)) as cursor:
+            row = await cursor.fetchone()
+            return row['value'] if row else default
 
-def set_log_channel(chat_id):
-    """Set the log channel ID."""
-    conn = get_connection()
-    conn.execute('UPDATE settings SET log_channel_id = ? WHERE id = 1', (chat_id,))
-    conn.commit()
-    conn.close()
+async def set_stat(key, value):
+    async with await get_db() as db:
+        await db.execute("REPLACE INTO stats (key, value) VALUES (?, ?)", (key, str(value)))
+        await db.commit()
 
-def get_log_channel():
-    """Get the log channel ID."""
-    conn = get_connection()
-    row = conn.execute('SELECT log_channel_id FROM settings WHERE id = 1').fetchone()
-    conn.close()
-    return row['log_channel_id'] if row else 0
-
-def set_media(file_path):
-    """Set the media file path."""
-    conn = get_connection()
-    conn.execute('UPDATE media SET file_path = ? WHERE id = 1', (file_path,))
-    conn.commit()
-    conn.close()
-
-def get_media():
-    """Get the media file path."""
-    conn = get_connection()
-    row = conn.execute('SELECT file_path FROM media WHERE id = 1').fetchone()
-    conn.close()
-    return row['file_path'] if row else ""
-
-def clear_media():
-    """Clear the media file path."""
-    conn = get_connection()
-    conn.execute('UPDATE media SET file_path = "" WHERE id = 1')
-    conn.commit()
-    conn.close()
-
-def get_stats():
-    """Get current stats."""
-    conn = get_connection()
-    row = conn.execute('SELECT total_sent, daily_sent, last_reset_date, start_date FROM stats WHERE id = 1').fetchone()
-    conn.close()
-    return dict(row) if row else {}
-
-def increment_stats():
-    """Increment total and daily sent counts."""
-    conn = get_connection()
-    conn.execute('UPDATE stats SET total_sent = total_sent + 1, daily_sent = daily_sent + 1 WHERE id = 1')
-    conn.commit()
-    conn.close()
-
-def reset_daily_stats(date_str):
-    """Reset daily stats if date changed."""
-    conn = get_connection()
-    conn.execute('UPDATE stats SET daily_sent = 0, last_reset_date = ? WHERE id = 1', (date_str,))
-    conn.commit()
-    conn.close()
+async def increment_stat(key):
+    async with await get_db() as db:
+        # aiosqlite doesn't support UPDATE returning clearly in all versions, so we read then write
+        async with db.execute("SELECT value FROM stats WHERE key = ?", (key,)) as cursor:
+            row = await cursor.fetchone()
+            curr = int(row['value']) if row else 0
+        await db.execute("REPLACE INTO stats (key, value) VALUES (?, ?)", (key, str(curr + 1)))
+        await db.commit()
