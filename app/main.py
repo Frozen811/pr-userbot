@@ -101,6 +101,8 @@ async def cmd_stop(event):
 
 async def broadcast_loop():
     logger.info("Starting broadcast loop...")
+    session_counter = 0 # Counter for "Coffee breaks"
+
     while True:
         try:
             settings = await database.get_settings()
@@ -144,6 +146,8 @@ async def broadcast_loop():
             active_chats = [c for c in chats if c['status'] != 'error'] # Retry muted ones differently if needed
             random.shuffle(active_chats)
 
+            consecutive_errors = 0 # Circuit Breaker counter
+
             for chat_row in active_chats:
                 settings = await database.get_settings()
                 if not settings['is_running']:
@@ -174,6 +178,9 @@ async def broadcast_loop():
                 try:
                     log(f"📢 Processing: {chat_title}")
 
+                    # 1. Safety: Mark chat as read (Human behavior)
+                    await client.send_read_acknowledge(chat_id)
+
                     async with client.action(chat_id, 'typing'):
                         await asyncio.sleep(random.randint(2, 5))
 
@@ -185,6 +192,15 @@ async def broadcast_loop():
                     total_sent_all = int(await database.get_stat('total_sent') or 0) + 1
                     await database.update_stat('daily_sent', total_sent_today)
                     await database.update_stat('total_sent', total_sent_all)
+
+                    consecutive_errors = 0 # Reset error counter on success
+
+                    # 2. Safety: Coffee Break (Long pause every 20-35 messages)
+                    session_counter += 1
+                    if session_counter % random.randint(20, 35) == 0:
+                        long_sleep = random.randint(300, 900) # 5 to 15 minutes
+                        log(f"☕ Taking a coffee break (Safety Pause) for {long_sleep//60} mins...")
+                        await asyncio.sleep(long_sleep)
 
                     # GC
                     gc.collect()
@@ -203,6 +219,7 @@ async def broadcast_loop():
                     # await database.remove_chat(chat_id)
                     # Instead of removing, mark as error so user can see in dashboard
                     await database.update_chat_status(chat_id, 'error', last_error=str(e))
+                    consecutive_errors += 1
                     try:
                         await client.delete_dialog(chat_id)
                     except:
@@ -227,11 +244,20 @@ async def broadcast_loop():
                 except Exception as e:
                     log(f"⚠️ Error sending to {chat_title}: {e}")
                     await database.update_chat_status(chat_id, 'active', last_error=str(e)) # Keep active but log error
+                    consecutive_errors += 1
                     await asyncio.sleep(5)
 
-            # End of cycle sleep (30 mins if loop completed)
-            log("End of broadcast cycle. Sleeping 30 mins...")
-            await asyncio.sleep(1800)
+                # 3. Safety: Circuit Breaker (Stop if too many errors in a row)
+                if consecutive_errors >= 5:
+                    log("🚨 Too many consecutive errors (5)! Emergency safety sleep for 60 mins...")
+                    await asyncio.sleep(3600)
+                    consecutive_errors = 0
+                    break
+
+            # End of cycle sleep (Randomized 25-45 mins)
+            cycle_sleep = random.randint(1500, 2700)
+            log(f"End of broadcast cycle. Sleeping {cycle_sleep//60} mins...")
+            await asyncio.sleep(cycle_sleep)
 
         except Exception as e:
             logger.error(f"Critical Loop Error: {e}", exc_info=True)
