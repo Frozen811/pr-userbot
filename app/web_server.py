@@ -80,6 +80,6 @@ async def update_config(message_template: str = Form(...), daily_limit: int = Fo
     return RedirectResponse(url="/config", status_code=303)
 
 async def run_server():
-    config = uvicorn.Config(app, host="0.0.0.0", port=80, log_level="info")
+    config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="info")
     server = uvicorn.Server(config)
     await server.serve()

@@ -12,3 +12,5 @@ services:
       - ./sessions:/app/sessions  # New volume for session files
     env_file:
       - .env
+    ports:
+      - "8080:8080"

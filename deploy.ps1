@@ -25,3 +25,8 @@ $RemoteCommands = "cd $BotPath && git pull origin $Branch && docker-compose down
 ssh root@$ServerIP $RemoteCommands
 
 Write-Host ">>> DONE! Bot is updated and running in Docker." -ForegroundColor Green
+Write-Host ">>> Admin Panel: http://admin.extr3me.me:8080" -ForegroundColor Cyan
+Write-Host ">>> 3. Fetching logs (Scan QR Code below)..." -ForegroundColor Yellow
+Start-Sleep -Seconds 2
+ssh -t root@$ServerIP "docker logs -f telegram_userbot"
+

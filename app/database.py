@@ -1,83 +1,123 @@
-import sqlite3
+import aiosqlite
 import os
+import logging
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'bot.db')
+logger = logging.getLogger(__name__)
 
-def init_db():
+async def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS settings (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            message_template TEXT,
-            is_running BOOLEAN DEFAULT 0
-        )
-    ''')
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS chats (
-            chat_id INTEGER PRIMARY KEY
-        )
-    ''')
-    
-    # Initialize settings if not present
-    cursor.execute('SELECT count(*) FROM settings')
-    if cursor.fetchone()[0] == 0:
-        cursor.execute('INSERT INTO settings (id, message_template, is_running) VALUES (1, "", 0)')
-    
-    conn.commit()
-    conn.close()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                message_template TEXT DEFAULT "",
+                daily_limit INTEGER DEFAULT 400,
+                is_running BOOLEAN DEFAULT 0
+            )
+        ''')
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS chats (
+                chat_id INTEGER PRIMARY KEY,
+                chat_title TEXT,
+                status TEXT DEFAULT 'active',
+                next_run_at TIMESTAMP,
+                last_error TEXT
+            )
+        ''')
 
-def get_template():
-    conn = get_db_connection()
-    row = conn.execute('SELECT message_template FROM settings WHERE id = 1').fetchone()
-    conn.close()
-    return row['message_template'] if row else ""
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS stats (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
 
-def set_template(template):
-    conn = get_db_connection()
-    conn.execute('UPDATE settings SET message_template = ? WHERE id = 1', (template,))
-    conn.commit()
-    conn.close()
+        # Initialize settings
+        async with db.execute('SELECT count(*) FROM settings') as cursor:
+            count = (await cursor.fetchone())[0]
+            if count == 0:
+                await db.execute('INSERT INTO settings (id, message_template, daily_limit, is_running) VALUES (1, "", 400, 0)')
 
-def get_status():
-    conn = get_db_connection()
-    row = conn.execute('SELECT is_running FROM settings WHERE id = 1').fetchone()
-    conn.close()
-    return bool(row['is_running']) if row else False
+        # Migration: Check columns in settings
+        async with db.execute("PRAGMA table_info(settings)") as cursor:
+            columns = [row[1] for row in await cursor.fetchall()]
 
-def set_status(is_running):
-    conn = get_db_connection()
-    conn.execute('UPDATE settings SET is_running = ? WHERE id = 1', (is_running,))
-    conn.commit()
-    conn.close()
+        if 'is_running' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN is_running BOOLEAN DEFAULT 0")
 
-def add_chat(chat_id):
-    conn = get_db_connection()
-    try:
-        conn.execute('INSERT INTO chats (chat_id) VALUES (?)', (chat_id,))
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
-    finally:
-        conn.close()
+        # Migration: Check columns in chats
+        async with db.execute("PRAGMA table_info(chats)") as cursor:
+            columns = [row[1] for row in await cursor.fetchall()]
 
-def remove_chat(chat_id):
-    conn = get_db_connection()
-    conn.execute('DELETE FROM chats WHERE chat_id = ?', (chat_id,))
-    conn.commit()
-    conn.close()
+        if 'chat_title' not in columns:
+            await db.execute("ALTER TABLE chats ADD COLUMN chat_title TEXT")
+        if 'status' not in columns:
+            await db.execute("ALTER TABLE chats ADD COLUMN status TEXT DEFAULT 'active'")
+        if 'next_run_at' not in columns:
+            await db.execute("ALTER TABLE chats ADD COLUMN next_run_at TIMESTAMP")
+        if 'last_error' not in columns:
+            await db.execute("ALTER TABLE chats ADD COLUMN last_error TEXT")
 
-def get_chats():
-    conn = get_db_connection()
-    chats = conn.execute('SELECT chat_id FROM chats').fetchall()
-    conn.close()
-    return [chat['chat_id'] for chat in chats]
+        await db.commit()
+
+async def get_settings():
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute('SELECT message_template, daily_limit, is_running FROM settings WHERE id = 1') as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+            return {"message_template": "", "daily_limit": 400, "is_running": 0}
+
+async def update_settings(template: str, limit: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('UPDATE settings SET message_template = ?, daily_limit = ? WHERE id = 1', (template, limit))
+        await db.commit()
+
+async def set_running_status(is_running: bool):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('UPDATE settings SET is_running = ? WHERE id = 1', (is_running,))
+        await db.commit()
+
+async def add_chat(chat_id: int, chat_title: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute('INSERT INTO chats (chat_id, chat_title, status) VALUES (?, ?, ?)', (chat_id, chat_title, 'active'))
+            await db.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+async def remove_chat(chat_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('DELETE FROM chats WHERE chat_id = ?', (chat_id,))
+        await db.commit()
+
+async def get_chats():
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute('SELECT * FROM chats') as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+async def update_chat_status(chat_id: int, status: str, next_run_at=None, last_error=None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            UPDATE chats 
+            SET status = ?, next_run_at = ?, last_error = ? 
+            WHERE chat_id = ?
+        ''', (status, next_run_at, last_error, chat_id))
+        await db.commit()
+
+async def update_stat(key: str, value: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('INSERT OR REPLACE INTO stats (key, value) VALUES (?, ?)', (key, str(value)))
+        await db.commit()
+
+async def get_stat(key: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute('SELECT value FROM stats WHERE key = ?', (key,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else "0"

@@ -1,4 +1,10 @@
-pyrogram
-# tgcrypto  <-- Commented out because it fails to build on Python 3.14 Windows. It is optional.
+telethon
+fastapi
+uvicorn
+jinja2
+aiosqlite
 python-dotenv
+python-multipart
+aiofiles
+pytz
 qrcode

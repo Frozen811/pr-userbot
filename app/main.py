@@ -4,207 +4,291 @@ import random
 import os
 import sys
 import qrcode
+from datetime import datetime
+from pytz import timezone
+import gc
 
-# Fix for Pyrogram's "There is no current event loop" error on import
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
+from telethon import TelegramClient, events
+from telethon.errors import (
+    FloodWaitError, PeerIdInvalidError, ChatWriteForbiddenError,
+    SlowModeWaitError, ChatRestrictedError, UserBannedInChannelError
+)
 
-from pyrogram import Client, filters, enums, idle
-from pyrogram.errors import FloodWait, PeerIdInvalid, InputUserDeactivated, UserBannedInChannel
-from app.config import API_ID, API_HASH
-from app.database import init_db, add_chat, remove_chat, set_template, get_template, set_status, get_status, get_chats
-from app.spintax import process_spintax
+from app import config, database, web_server, spintax
 
-# --- Basic Configuration ---
+# --- Logging Setup ---
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# --- Globals & Events ---
-broadcast_event = asyncio.Event() 
-broadcast_task = None
+def log(message):
+    logger.info(message)
+    web_server.add_log(f"{datetime.now().strftime('%H:%M:%S')} - {message}")
 
-# --- Database & Initialization ---
-init_db()
+# --- Constants ---
+SESSION_PATH = 'sessions/user_session' # Telethon adds .session automatically
+TZ_KYIV = timezone('Europe/Kyiv')
 
-# --- Pyrogram Client Initialization ---
-app = Client(
-    "user_session", 
-    workdir="/app/sessions",
-    api_id=API_ID, 
-    api_hash=API_HASH,
-    device_model="Desktop PC",
-    system_version="Windows 10",
-    app_version="4.16.3",
-    lang_code="en"
-)
+# --- Client Init ---
+client = TelegramClient(SESSION_PATH, config.API_ID, config.API_HASH)
 
 # --- Commands ---
 
-@app.on_message(filters.me & filters.command("add", prefixes="."))
-async def cmd_add(client, message):
-    chat_id = message.chat.id
-    if add_chat(chat_id):
-        await message.edit("✅ Chat saved")
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.add'))
+async def cmd_add(event):
+    chat = await event.get_chat()
+    chat_id = chat.id
+    chat_title = getattr(chat, 'title', str(chat_id))
+
+    success = await database.add_chat(chat_id, chat_title)
+    if success:
+        await event.edit(f"✅ Saved chat: **{chat_title}**")
+        log(f"Added chat: {chat_title} ({chat_id})")
     else:
-        await message.edit("⚠️ Chat already saved")
+        await event.edit(f"⚠️ Chat **{chat_title}** is already saved.")
 
-@app.on_message(filters.me & filters.command("del", prefixes="."))
-async def cmd_del(client, message):
-    chat_id = message.chat.id
-    remove_chat(chat_id)
-    await message.edit("🗑 Chat removed")
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.del'))
+async def cmd_del(event):
+    chat = await event.get_chat()
+    await database.remove_chat(chat.id)
+    await event.edit(f"🗑 Removed: **{getattr(chat, 'title', chat.id)}**")
+    log(f"Removed chat: {getattr(chat, 'title', chat.id)}")
 
-@app.on_message(filters.me & filters.command("set", prefixes="."))
-async def cmd_set(client, message):
-    if len(message.command) < 2:
-        await message.edit("⚠️ Usage: `.set [text]`")
-        return
-    text = message.text.split(maxsplit=1)[1]
-    set_template(text)
-    await message.edit("📝 Template updated")
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.set (.+)'))
+async def cmd_set(event):
+    text = event.pattern_match.group(1)
+    # Get current limit to preserve it
+    settings = await database.get_settings()
+    await database.update_settings(text, settings['daily_limit'])
+    await event.edit("📝 **Template Saved!**")
+    log("Template updated via command.")
 
-@app.on_message(filters.me & filters.command("list", prefixes="."))
-async def cmd_list(client, message):
-    chats = get_chats()
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.list'))
+async def cmd_list(event):
+    chats = await database.get_chats()
     if not chats:
-        await message.edit("No chats saved.")
+        await event.edit("No chats saved.")
         return
-    chat_list = "\n".join([f"`{c}`" for c in chats])
-    await message.edit(f"📋 **Saved Chats:**\n{chat_list}")
 
-@app.on_message(filters.me & filters.command("start", prefixes="."))
-async def cmd_start(client, message):
-    set_status(True)
-    if not broadcast_event.is_set():
-        broadcast_event.set()
-        logger.info("Broadcasting started by user.")
-        await message.edit("🚀 **Sending started!**")
-    else:
-        await message.edit("✅ **Sending is already running.**")
+    msg = ["📋 **Saved Chats:**"]
+    for i, c in enumerate(chats, 1):
+        status = c['status']
+        icon = "✅" if status == 'active' else "⚠️" if status == 'muted' else "❌"
+        msg.append(f"{i}. {icon} {c['chat_title']} `{c['chat_id']}`")
 
-@app.on_message(filters.me & filters.command("stop", prefixes="."))
-async def cmd_stop(client, message):
-    set_status(False)
-    if broadcast_event.is_set():
-        broadcast_event.clear()
-        logger.info("Broadcasting stopped by user.")
-        await message.edit("🛑 **Sending stopped!**")
-    else:
-        await message.edit("✅ **Sending is already stopped.**")
+    await event.edit("\n".join(msg))
+
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.start'))
+async def cmd_start(event):
+    await database.set_running_status(True)
+    await event.edit("🚀 **Broadcast Started!**")
+    log("Broadcast started manually.")
+
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.stop'))
+async def cmd_stop(event):
+    await database.set_running_status(False)
+    await event.edit("🛑 **Broadcast Stopped!**")
+    log("Broadcast stopped manually.")
 
 # --- Broadcast Loop ---
 
 async def broadcast_loop():
-    logger.info("Broadcast loop initialized.")
+    logger.info("Starting broadcast loop...")
     while True:
-        await broadcast_event.wait() 
-        
-        logger.info("Starting new broadcast cycle.")
-        
-        chats = get_chats()
-        template = get_template()
+        try:
+            settings = await database.get_settings()
+            if not settings['is_running']:
+                await asyncio.sleep(5)
+                continue
 
-        if not chats or not template:
-            logger.warning("No chats or template found. Stopping broadcast.")
-            set_status(False)
-            broadcast_event.clear()
-            await app.send_message("me", "⚠️ **Broadcast stopped:** No chats or template found.")
-            continue
+            # Night Mode Check
+            now_kyiv = datetime.now(TZ_KYIV)
+            if now_kyiv.hour >= 23 or now_kyiv.hour < 7:
+                log(f"🌙 Night Mode active (Kyiv {now_kyiv.strftime('%H:%M')}). Sleeping 1h...")
+                await asyncio.sleep(3600)
+                continue
 
-        sent_count, failed_count = 0, 0
-        
-        for chat_id in chats:
-            if not broadcast_event.is_set():
-                logger.info("Broadcast was stopped mid-cycle.")
-                break
+            # Check Limit
+            daily_limit = settings['daily_limit']
+            total_sent_today = int(await database.get_stat('daily_sent') or 0)
 
-            message_text = process_spintax(template)
-            
-            try:
-                await app.send_chat_action(chat_id, enums.ChatAction.TYPING)
-                await asyncio.sleep(random.uniform(2, 4))
-                
-                await app.send_message(chat_id, message_text)
-                sent_count += 1
-                logger.info(f"Sent to {chat_id}")
-                
-                await asyncio.sleep(random.randint(20, 50))
+            # Reset counter if new day (simplified check: update this logic if strictly needed,
+            # ideally store 'last_reset_date' in stats and check against it)
+            last_reset_str = await database.get_stat('last_reset_date')
+            today_str = now_kyiv.strftime('%Y-%m-%d')
+            if last_reset_str != today_str:
+                await database.update_stat('daily_sent', "0")
+                await database.update_stat('last_reset_date', today_str)
+                total_sent_today = 0
 
-            except FloodWait as e:
-                logger.warning(f"FloodWait: Sleeping for {e.value + 5}s")
-                await asyncio.sleep(e.value + 5)
-            except (PeerIdInvalid, InputUserDeactivated, UserBannedInChannel) as e:
-                logger.error(f"Removing chat {chat_id} due to: {e}")
-                remove_chat(chat_id)
-                failed_count += 1
-            except Exception as e:
-                logger.error(f"Unexpected error sending to {chat_id}: {e}")
-                failed_count += 1
+            if total_sent_today >= daily_limit:
+                log("🛑 Daily limit reached. Sleeping until tomorrow...")
+                await asyncio.sleep(3600)
+                continue
 
-        if sent_count > 0 or failed_count > 0:
-            report = f"📊 **Cycle Done**\n- Sent: {sent_count}\n- Failed: {failed_count}"
-            logger.info(report)
-            await app.send_message("me", report)
+            # Get Chats
+            chats = await database.get_chats()
+            if not chats:
+                log("No chats in DB. Sleeping 60s...")
+                await asyncio.sleep(60)
+                continue
 
-        if broadcast_event.is_set():
-            cycle_sleep = 600 + random.randint(60, 180)
-            logger.info(f"Cycle finished. Sleeping for {cycle_sleep // 60} minutes.")
-            await asyncio.sleep(cycle_sleep)
+            # Shuffle for randomness
+            active_chats = [c for c in chats if c['status'] != 'error'] # Retry muted ones differently if needed
+            random.shuffle(active_chats)
 
-# --- Main Execution ---
+            for chat_row in active_chats:
+                settings = await database.get_settings()
+                if not settings['is_running']:
+                    break
+
+                chat_id = chat_row['chat_id']
+                chat_title = chat_row['chat_title']
+
+                # Check Mute/Slowmode status
+                if chat_row['next_run_at']:
+                    next_run = datetime.fromisoformat(chat_row['next_run_at'])
+                    if datetime.now() < next_run:
+                        # Skip silently or log debug
+                        continue
+                    else:
+                        # Clear mute status
+                        await database.update_chat_status(chat_id, 'active', None, None)
+
+                # Send Message
+                template = settings['message_template']
+                if not template:
+                    log("⚠️ No message template set!")
+                    await asyncio.sleep(60)
+                    break
+
+                text = spintax.process_spintax(template)
+
+                try:
+                    log(f"📢 Processing: {chat_title}")
+
+                    async with client.action(chat_id, 'typing'):
+                        await asyncio.sleep(random.randint(2, 5))
+
+                    await client.send_message(chat_id, text)
+                    log(f"✅ Sent to: {chat_title}")
+
+                    # Update Stats
+                    total_sent_today += 1
+                    total_sent_all = int(await database.get_stat('total_sent') or 0) + 1
+                    await database.update_stat('daily_sent', total_sent_today)
+                    await database.update_stat('total_sent', total_sent_all)
+
+                    # GC
+                    gc.collect()
+
+                    # Sleep
+                    sleep_time = random.randint(30, 60)
+                    log(f"⏳ Sleeping {sleep_time}s...")
+                    await asyncio.sleep(sleep_time)
+
+                except FloodWaitError as e:
+                    log(f"🌊 FLOOD WAIT: Sleeping {e.seconds}s")
+                    await asyncio.sleep(e.seconds)
+
+                except (PeerIdInvalidError, ChatWriteForbiddenError, UserBannedInChannelError) as e:
+                    log(f"❌ Banned/Invalid ({chat_title}). Removing...")
+                    # await database.remove_chat(chat_id)
+                    # Instead of removing, mark as error so user can see in dashboard
+                    await database.update_chat_status(chat_id, 'error', last_error=str(e))
+                    try:
+                        await client.delete_dialog(chat_id)
+                    except:
+                        pass
+
+                except SlowModeWaitError as e:
+                    log(f"🐌 Slowmode ({chat_title}): Wait {e.seconds}s")
+                    next_run = datetime.now().timestamp() + e.seconds + 5
+                    # Convert to isoformat for storage? or just store timestamp?
+                    # DB schema says TIMESTAMP. SQLite handles logic.
+                    # Python datetime object is safer for aiosqlite adapters usually.
+                    next_run_dt = datetime.fromtimestamp(next_run)
+                    await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error=f"Slowmode {e.seconds}s")
+
+                except ChatRestrictedError:
+                    log(f"🔇 Restricted ({chat_title}). Muting for 2h.")
+                    # Mute for 2 hours default
+                    next_run = datetime.now().timestamp() + 7200
+                    next_run_dt = datetime.fromtimestamp(next_run)
+                    await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error="Restricted")
+
+                except Exception as e:
+                    log(f"⚠️ Error sending to {chat_title}: {e}")
+                    await database.update_chat_status(chat_id, 'active', last_error=str(e)) # Keep active but log error
+                    await asyncio.sleep(5)
+
+            # End of cycle sleep (30 mins if loop completed)
+            log("End of broadcast cycle. Sleeping 30 mins...")
+            await asyncio.sleep(1800)
+
+        except Exception as e:
+            logger.error(f"Critical Loop Error: {e}", exc_info=True)
+            await asyncio.sleep(60)
+
+# --- Check Auth & QR ---
+async def check_auth():
+    if not await client.is_user_authorized():
+        qr = await client.qr_login()
+        print("Scanned QR Login detected. Generating QR...")
+        qr_obj = qrcode.QRCode()
+        qr_obj.add_data(qr.url)
+        qr_obj.print_ascii(invert=True)
+        print("Please scan the QR code using your Telegram app.")
+
+        # Wait for login
+        await qr.wait()
+        print("Login successful!")
+
+# --- Main Entry ---
 
 async def main():
-    global broadcast_task
-    
-    # Check if session exists by trying to connect
-    try:
-        is_authorized = await app.connect()
-    except Exception as e:
-        logger.error(f"Connection error: {e}")
-        return
+    # 1. Init DB
+    await database.init_db()
 
-    if not is_authorized:
-        logger.info("Session not found. Generating QR Code...")
+    # 2. Start Web Server
+    # uvicorn needs to run on the loop.
+    # web_server.run_server() is an async func blocking? No, uvicorn.Server.serve() is blocking.
+    # We should run it as a task.
+    web_task = asyncio.create_task(web_server.run_server())
+    log("Web Server started on port 8080.")
+
+    # 3. Connect Client
+    await client.connect()
+
+    # 4. Check Auth
+    if not await client.is_user_authorized():
+        # Handle QR login manually because client.start() logic is tricky to customize for strictly QR
+        # client.qr_login returns a QRLogin object with .url and .wait()
         try:
-            # This generates and prints the QR code to the terminal
-            user = await app.authorize()
-            logger.info(f"Login successful! User: {user.first_name}")
+            qr_login = await client.qr_login()
+            print("Session missing. Generating QR Code...")
+            qr = qrcode.QRCode()
+            qr.add_data(qr_login.url)
+            qr.print_ascii(invert=True)
+            print("Scan above!")
+            await qr_login.wait()
+            print("Logged in!")
         except Exception as e:
-            logger.error(f"Login failed: {e}")
+            print(f"Login failed: {e}")
             return
-    else:
-        logger.info("Session found. Logging in...")
 
-    me = await app.get_me()
-    logger.info(f"Logged in as {me.first_name} ({me.username})")
+    log("Telegram Client Connected!")
 
+    # 5. Start Broadcast Loop
     broadcast_task = asyncio.create_task(broadcast_loop())
     
-    if get_status():
-        broadcast_event.set()
-        logger.info("Broadcasting was enabled on startup. Resuming...")
-    
-    logger.info("UserBot is running. Use commands in 'Saved Messages'.")
-    await idle()
-
-async def shutdown():
-    logger.info("Shutting down...")
-    if broadcast_task:
-        broadcast_task.cancel()
-    if app.is_connected:
-        await app.stop()
+    # 6. Run Client until disconnected
+    await client.run_until_disconnected()
 
 if __name__ == '__main__':
     try:
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Shutdown signal received.")
-    finally:
-        if app.is_initialized:
-            asyncio.run(shutdown())
-        logger.info("Shutdown complete.")
+    except KeyboardInterrupt:
+        print("Stopping...")
