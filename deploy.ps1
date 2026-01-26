@@ -26,7 +26,11 @@ ssh root@$ServerIP $RemoteCommands
 
 Write-Host ">>> DONE! Bot is updated and running in Docker." -ForegroundColor Green
 Write-Host ">>> Admin Panel: http://admin.extr3me.me:8080" -ForegroundColor Cyan
-Write-Host ">>> 3. Fetching logs (Scan QR Code below)..." -ForegroundColor Yellow
+Write-Host " "
+Write-Host ">>> 3. LIVE LOGS (For QR Code or Errors)" -ForegroundColor Yellow
+Write-Host ">>> NOTE: Press CTRL+C to stop watching logs." -ForegroundColor Yellow
+Write-Host ">>>       The bot will CONTINUE running in the background!" -ForegroundColor Yellow
+Write-Host " "
 Start-Sleep -Seconds 2
 ssh -t root@$ServerIP "docker logs -f telegram_userbot"
 
