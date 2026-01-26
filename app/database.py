@@ -13,7 +13,15 @@ async def init_db():
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 message_template TEXT DEFAULT "",
                 daily_limit INTEGER DEFAULT 400,
-                is_running BOOLEAN DEFAULT 0
+                is_running BOOLEAN DEFAULT 0,
+                min_delay INTEGER DEFAULT 30,
+                max_delay INTEGER DEFAULT 60,
+                night_start INTEGER DEFAULT 22,
+                night_end INTEGER DEFAULT 7,
+                light_start INTEGER DEFAULT 7,
+                light_end INTEGER DEFAULT 14,
+                light_min_delay INTEGER DEFAULT 60,
+                light_max_delay INTEGER DEFAULT 120
             )
         ''')
 
@@ -38,7 +46,7 @@ async def init_db():
         async with db.execute('SELECT count(*) FROM settings') as cursor:
             count = (await cursor.fetchone())[0]
             if count == 0:
-                await db.execute('INSERT INTO settings (id, message_template, daily_limit, is_running) VALUES (1, "", 400, 0)')
+                await db.execute('INSERT INTO settings (id, message_template, daily_limit, is_running, min_delay, max_delay, night_start, night_end) VALUES (1, "", 400, 0, 30, 60, 22, 7)')
 
         # Migration: Check columns in settings
         async with db.execute("PRAGMA table_info(settings)") as cursor:
@@ -46,6 +54,22 @@ async def init_db():
 
         if 'is_running' not in columns:
             await db.execute("ALTER TABLE settings ADD COLUMN is_running BOOLEAN DEFAULT 0")
+        if 'min_delay' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN min_delay INTEGER DEFAULT 30")
+        if 'max_delay' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN max_delay INTEGER DEFAULT 60")
+        if 'night_start' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN night_start INTEGER DEFAULT 22")
+        if 'night_end' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN night_end INTEGER DEFAULT 7")
+        if 'light_start' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN light_start INTEGER DEFAULT 7")
+        if 'light_end' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN light_end INTEGER DEFAULT 14")
+        if 'light_min_delay' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN light_min_delay INTEGER DEFAULT 60")
+        if 'light_max_delay' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN light_max_delay INTEGER DEFAULT 120")
 
         # Migration: Check columns in chats
         async with db.execute("PRAGMA table_info(chats)") as cursor:
@@ -65,15 +89,31 @@ async def init_db():
 async def get_settings():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute('SELECT message_template, daily_limit, is_running FROM settings WHERE id = 1') as cursor:
+        async with db.execute('SELECT * FROM settings WHERE id = 1') as cursor:
             row = await cursor.fetchone()
             if row:
                 return dict(row)
-            return {"message_template": "", "daily_limit": 400, "is_running": 0}
+            return {
+                "message_template": "",
+                "daily_limit": 400,
+                "is_running": 0,
+                "min_delay": 30,
+                "max_delay": 60,
+                "night_start": 22,
+                "night_end": 7,
+                "light_start": 7,
+                "light_end": 14,
+                "light_min_delay": 60,
+                "light_max_delay": 120
+            }
 
-async def update_settings(template: str, limit: int):
+async def update_settings(template: str, limit: int, min_delay: int, max_delay: int, night_start: int, night_end: int, light_start: int, light_end: int, light_min_delay: int, light_max_delay: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('UPDATE settings SET message_template = ?, daily_limit = ? WHERE id = 1', (template, limit))
+        await db.execute('''
+            UPDATE settings 
+            SET message_template = ?, daily_limit = ?, min_delay = ?, max_delay = ?, night_start = ?, night_end = ?, light_start = ?, light_end = ?, light_min_delay = ?, light_max_delay = ? 
+            WHERE id = 1
+        ''', (template, limit, min_delay, max_delay, night_start, night_end, light_start, light_end, light_min_delay, light_max_delay))
         await db.commit()
 
 async def set_running_status(is_running: bool):

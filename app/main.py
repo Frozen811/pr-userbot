@@ -32,27 +32,53 @@ def log(message):
 SESSION_PATH = 'sessions/user_session' # Telethon adds .session automatically
 TZ_KYIV = timezone('Europe/Kyiv')
 
-def get_delay_and_mode(now_kyiv):
+def get_delay_and_mode(now_kyiv, settings):
     hour = now_kyiv.hour
     weekday = now_kyiv.weekday() # 0=Mon, 6=Sun
 
-    # Weekdays (Mon=0 to Fri=4)
-    if 0 <= weekday <= 4:
-        if 7 <= hour < 14:
-            return random.randint(60, 120), "Light"
-        elif 14 <= hour < 22:
-            return random.randint(30, 60), "Normal"
-        else:
-            return None, "Sleep"
+    # Night Mode
+    night_start = settings.get('night_start', 22)
+    night_end = settings.get('night_end', 7)
 
-    # Weekends (Sat=5, Sun=6)
+    # Normal Mode
+    normal_min = settings.get('min_delay', 30)
+    normal_max = settings.get('max_delay', 60)
+
+    # Light Mode
+    light_start = settings.get('light_start', 7)
+    light_end = settings.get('light_end', 14)
+    light_min = settings.get('light_min_delay', 60)
+    light_max = settings.get('light_max_delay', 120)
+
+    # 1. Check Sleep Mode (Configurable via Web)
+    is_night = False
+    if night_start > night_end:
+        # e.g. Start 22, End 7. Night is 22..23, 0..6
+        if hour >= night_start or hour < night_end:
+            is_night = True
     else:
-        if 7 <= hour < 12:
-            return random.randint(60, 120), "Light"
-        elif 12 <= hour < 24:
-             return random.randint(30, 60), "Normal"
-        else:
-            return None, "Sleep"
+        # e.g. Start 1, End 5. Night is 1..4
+        if night_start <= hour < night_end:
+            is_night = True
+
+    if is_night:
+        return None, "Sleep"
+
+    # 2. Check Light Mode
+    # Light mode precedence over Normal mode
+    is_light = False
+    if light_start > light_end:
+        if hour >= light_start or hour < light_end:
+            is_light = True
+    else:
+         if light_start <= hour < light_end:
+            is_light = True
+
+    if is_light:
+        return random.randint(light_min, light_max), "Light"
+
+    # 3. Normal Mode (Default)
+    return random.randint(normal_min, normal_max), "Normal"
 
 # --- Client Init ---
 client = TelegramClient(SESSION_PATH, config.API_ID, config.API_HASH)
@@ -120,7 +146,21 @@ async def cmd_set(event):
     text = event.pattern_match.group(1)
     # Get current limit to preserve it
     settings = await database.get_settings()
-    await database.update_settings(text, settings['daily_limit'])
+    await database.update_settings(
+        text,
+        settings['daily_limit'],
+        # Normal
+        settings.get('min_delay', 30),
+        settings.get('max_delay', 60),
+        # Night
+        settings.get('night_start', 22),
+        settings.get('night_end', 7),
+        # Light
+        settings.get('light_start', 7),
+        settings.get('light_end', 14),
+        settings.get('light_min_delay', 60),
+        settings.get('light_max_delay', 120),
+    )
     await event.edit("📝 **Template Saved!**")
     log("Template updated via command.")
 
@@ -207,7 +247,7 @@ async def broadcast_loop():
 
             # Schedule & Mode Check
             now_kyiv = datetime.now(TZ_KYIV)
-            delay_seconds, mode = get_delay_and_mode(now_kyiv)
+            delay_seconds, mode = get_delay_and_mode(now_kyiv, settings)
 
             if mode == "Sleep":
                 log(f"🌙 Sleep Mode active (Kyiv {now_kyiv.strftime('%H:%M')}). Sleeping 1h...")
@@ -254,7 +294,7 @@ async def broadcast_loop():
 
                 # Check mode again (e.g. if hour changed)
                 now_kyiv = datetime.now(TZ_KYIV)
-                delay_seconds, mode = get_delay_and_mode(now_kyiv)
+                delay_seconds, mode = get_delay_and_mode(now_kyiv, settings)
                 if mode == "Sleep":
                     break # Break inner loop to go to outer loop sleep
 

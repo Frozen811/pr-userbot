@@ -162,6 +162,56 @@
                       <label class="form-label">Daily Limit</label>
                       <input type="number" name="daily_limit" class="form-control bg-black text-light border-secondary" value="{{ config.daily_limit }}">
                   </div>
+
+                  <h5 class="mt-4 mb-3 text-secondary">⏰ Timeouts & Schedule</h5>
+
+                  <div class="row g-3 mb-3">
+                      <div class="col-md-6">
+                          <label class="form-label">Normal Min Delay (Seconds)</label>
+                          <input type="number" name="min_delay" class="form-control bg-black text-light border-secondary" value="{{ config.min_delay }}">
+                          <div class="form-text text-muted">Active during day (excluding Light Mode).</div>
+                      </div>
+                      <div class="col-md-6">
+                          <label class="form-label">Normal Max Delay (Seconds)</label>
+                          <input type="number" name="max_delay" class="form-control bg-black text-light border-secondary" value="{{ config.max_delay }}">
+                          <div class="form-text text-muted">Active during day (excluding Light Mode).</div>
+                      </div>
+                  </div>
+
+                  <h6 class="text-secondary mt-3">🌙 Night Mode (Sleep)</h6>
+                  <div class="row g-3 mb-3">
+                      <div class="col-md-6">
+                          <label class="form-label">Start Hour (0-23)</label>
+                          <input type="number" name="night_start" min="0" max="23" class="form-control bg-black text-light border-secondary" value="{{ config.night_start }}">
+                          <div class="form-text text-muted">Bot stops sending at this hour.</div>
+                      </div>
+                      <div class="col-md-6">
+                          <label class="form-label">End Hour (0-23)</label>
+                          <input type="number" name="night_end" min="0" max="23" class="form-control bg-black text-light border-secondary" value="{{ config.night_end }}">
+                          <div class="form-text text-muted">Bot resumes sending at this hour.</div>
+                      </div>
+                  </div>
+
+                  <h6 class="text-secondary mt-3">💡 Light Mode (Slow Down)</h6>
+                  <div class="row g-3 mb-3">
+                      <div class="col-md-3">
+                          <label class="form-label">Start Hour</label>
+                          <input type="number" name="light_start" min="0" max="23" class="form-control bg-black text-light border-secondary" value="{{ config.get('light_start', 7) }}">
+                      </div>
+                      <div class="col-md-3">
+                          <label class="form-label">End Hour</label>
+                          <input type="number" name="light_end" min="0" max="23" class="form-control bg-black text-light border-secondary" value="{{ config.get('light_end', 14) }}">
+                      </div>
+                      <div class="col-md-3">
+                          <label class="form-label">Min Delay</label>
+                          <input type="number" name="light_min_delay" class="form-control bg-black text-light border-secondary" value="{{ config.get('light_min_delay', 60) }}">
+                      </div>
+                      <div class="col-md-3">
+                          <label class="form-label">Max Delay</label>
+                          <input type="number" name="light_max_delay" class="form-control bg-black text-light border-secondary" value="{{ config.get('light_max_delay', 120) }}">
+                      </div>
+                  </div>
+
                   <button class="btn btn-primary">Save Changes</button>
               </form>
           </div>
