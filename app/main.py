@@ -47,8 +47,12 @@ async def cmd_add(event):
     if success:
         await event.edit(f"✅ Saved chat: **{chat_title}**")
         log(f"Added chat: {chat_title} ({chat_id})")
+        await asyncio.sleep(3)
+        await event.delete()
     else:
         await event.edit(f"⚠️ Chat **{chat_title}** is already saved.")
+        await asyncio.sleep(3)
+        await event.delete()
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.del'))
 async def cmd_del(event):
@@ -289,6 +293,12 @@ async def main():
             return
 
     log("Telegram Client Connected!")
+
+    # Fix for 'Could not find the input entity'
+    # We must fetch dialogs once to populate Telethon's internal cache with access hashes
+    log("Fetching dialogs to cache entities...")
+    await client.get_dialogs()
+    log("Dialogs synced!")
 
     # 5. Start Broadcast Loop
     broadcast_task = asyncio.create_task(broadcast_loop())
