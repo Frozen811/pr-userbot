@@ -14,6 +14,7 @@ from telethon.errors import (
     SlowModeWaitError, ChatRestrictedError, UserBannedInChannelError,
     SessionPasswordNeededError
 )
+from telethon.extensions import html
 
 from app import config, database, web_server, spintax
 
@@ -95,7 +96,16 @@ async def cmd_del(event):
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.set (.+)'))
 async def cmd_set(event):
-    text = event.pattern_match.group(1)
+    if event.message.entities:
+        # If message has formatting entities, convert key text to HTML
+        full_html = html.unparse(event.message.message, event.message.entities)
+        # Remove the command ".set " from the start
+        # We split by the first space which separates cmd and args
+        parts = full_html.split(maxsplit=1)
+        text = parts[1] if len(parts) > 1 else event.pattern_match.group(1)
+    else:
+        text = event.pattern_match.group(1)
+
     # Get current settings to preserve other values
     s = await database.get_settings()
 
@@ -113,7 +123,15 @@ async def cmd_set(event):
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.set2 (.+)'))
 async def cmd_set2(event):
-    text = event.pattern_match.group(1)
+    if event.message.entities:
+        # If message has formatting entities, convert key text to HTML
+        full_html = html.unparse(event.message.message, event.message.entities)
+        # Remove the command ".set2 " from the start
+        parts = full_html.split(maxsplit=1)
+        text = parts[1] if len(parts) > 1 else event.pattern_match.group(1)
+    else:
+        text = event.pattern_match.group(1)
+
     s = await database.get_settings()
 
     await database.update_settings(
@@ -340,9 +358,9 @@ async def broadcast_loop():
                         await asyncio.sleep(random.randint(2, 5))
 
                     if has_media:
-                        await client.send_message(chat_id, text, file=media_path)
+                        await client.send_message(chat_id, text, file=media_path, parse_mode='html')
                     else:
-                        await client.send_message(chat_id, text)
+                        await client.send_message(chat_id, text, parse_mode='html')
 
                     log(f"✅ Sent to: {chat_title}")
 
