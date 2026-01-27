@@ -263,10 +263,18 @@ async def broadcast_loop():
 
             total_sent_today = int(await database.get_stat('daily_sent') or 0)
 
+            # FIX: Check limit dynamically inside the loop, not just once at start
             if total_sent_today >= daily_limit:
-                log(f"🛑 Daily limit reached ({daily_limit}). Sleeping until tomorrow...")
-                await asyncio.sleep(3600)
-                continue
+                # Re-check limit from DB in case user increased it
+                settings = await database.get_settings()
+                daily_limit = settings['daily_limit']
+                
+                if total_sent_today >= daily_limit:
+                    log(f"🛑 Daily limit reached ({total_sent_today}/{daily_limit}). Sleeping 60s...")
+                    await asyncio.sleep(60)
+                    continue
+                else:
+                    log(f"✅ Limit increased! Resuming... ({total_sent_today}/{daily_limit})")
 
             # Get Chats
             chats = await database.get_chats()
@@ -320,9 +328,15 @@ async def broadcast_loop():
 
             # Process chats
             for chat_row in active_chats:
-                # Re-check settings inside loop
+                # Re-check settings inside loop (for stop command or limit change)
                 settings = await database.get_settings()
                 if not settings['is_running']:
+                    break
+                
+                # Check limit inside inner loop too
+                total_sent_today = int(await database.get_stat('daily_sent') or 0)
+                if total_sent_today >= settings['daily_limit']:
+                    log(f"🛑 Daily limit hit during cycle ({total_sent_today}/{settings['daily_limit']}). Pausing...")
                     break
 
                 chat_id = chat_row['chat_id']
