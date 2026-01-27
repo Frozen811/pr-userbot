@@ -284,26 +284,36 @@ async def broadcast_loop():
             random.shuffle(active_chats)
 
             # Determine text for this cycle
-            use_dual = settings.get('use_dual_mode', False)
-            template_1 = settings.get('message_template', '')
-            template_2 = settings.get('message_template_2', '')
+            use_dual = bool(settings.get('use_dual_mode', False))
+            template_1 = settings.get('message_template', '') or ""
+            template_2 = settings.get('message_template_2', '') or ""
+
+            # Debug logs to verify config loading
+            log(f"⚙️ Config: Dual={use_dual} | Index={current_message_index}")
+            log(f"📝 Templates: T1(len)={len(template_1)} | T2(len)={len(template_2)}")
 
             if use_dual:
                 if current_message_index == 1:
                     template_to_use = template_1
-                    log("🔄 Cycle: Dual Mode - Sending Message #1")
+                    log("1️⃣ Cycle: Dual Mode - Sending Message #1")
                 else:
                     template_to_use = template_2
-                    log("🔄 Cycle: Dual Mode - Sending Message #2")
+                    log("2️⃣ Cycle: Dual Mode - Sending Message #2")
             else:
                 # Single mode always uses template 1
                 template_to_use = template_1
-                current_message_index = 1 # reset just in case
-                log("🔄 Cycle: Single Mode - Sending Message #1")
+                current_message_index = 1 
+                log("1️⃣ Cycle: Single Mode - Sending Message #1")
 
             if not template_to_use:
-                log(f"⚠️ Message Template #{current_message_index} is empty! Skipping cycle.")
-                await asyncio.sleep(60)
+                log(f"⚠️ Template #{current_message_index} is empty!")
+                if use_dual:
+                    # Toggle index to try the other message next time
+                    current_message_index = 2 if current_message_index == 1 else 1
+                    log(f"🔄 Switched to Index {current_message_index} for next attempt.")
+                    await asyncio.sleep(5)
+                else:
+                    await asyncio.sleep(60)
                 continue
 
             consecutive_errors = 0
@@ -423,6 +433,7 @@ async def broadcast_loop():
             # Toggle message index if Dual Mode is on
             if use_dual:
                 current_message_index = 2 if current_message_index == 1 else 1
+                log(f"🔄 Cycle Finished. Toggled Index to: {current_message_index}")
 
             cycle_delay = settings.get('cycle_delay_seconds', 120)
             log(f"🏁 End of cycle. Sleeping {cycle_delay}s...")
