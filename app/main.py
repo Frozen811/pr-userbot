@@ -111,6 +111,42 @@ async def cmd_set(event):
     await event.edit("📝 **Template 1 Saved!**")
     log("Template updated via command.")
 
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.set2 (.+)'))
+async def cmd_set2(event):
+    text = event.pattern_match.group(1)
+    s = await database.get_settings()
+
+    await database.update_settings(
+        template=s.get('message_template', ''),
+        template_2=text,
+        dual_mode=s.get('use_dual_mode', False),
+        limit=s['daily_limit'],
+        min_delay=s.get('min_delay', 30),
+        max_delay=s.get('max_delay', 60),
+        cycle_delay=s.get('cycle_delay_seconds', 120)
+    )
+    await event.edit("📝 **Template 2 Saved!**")
+    log("Template 2 updated via command.")
+
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.dual (on|off)'))
+async def cmd_dual(event):
+    state = event.pattern_match.group(1).lower()
+    enable = (state == 'on')
+
+    s = await database.get_settings()
+    await database.update_settings(
+        template=s.get('message_template', ''),
+        template_2=s.get('message_template_2', ''),
+        dual_mode=enable,
+        limit=s['daily_limit'],
+        min_delay=s.get('min_delay', 30),
+        max_delay=s.get('max_delay', 60),
+        cycle_delay=s.get('cycle_delay_seconds', 120)
+    )
+    status_text = "Enabled" if enable else "Disabled"
+    await event.edit(f"🔄 **Dual Mode {status_text}!**")
+    log(f"Dual mode {status_text.lower()} via command.")
+
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.list'))
 async def cmd_list(event):
     chats = await database.get_chats()
