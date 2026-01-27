@@ -77,27 +77,21 @@ async def config_page(request: Request):
 @app.post("/config/update")
 async def update_config(
     message_template: str = Form(""),
+    message_template_2: str = Form(""),
+    use_dual_mode: bool = Form(False),
     daily_limit: int = Form(400),
     min_delay: int = Form(30),
     max_delay: int = Form(60),
-    night_start: int = Form(22),
-    night_end: int = Form(7),
-    light_start: int = Form(7),
-    light_end: int = Form(14),
-    light_min_delay: int = Form(60),
-    light_max_delay: int = Form(120)
+    cycle_delay_seconds: int = Form(120)
 ):
     await database.update_settings(
         template=message_template,
+        template_2=message_template_2,
+        dual_mode=use_dual_mode,
         limit=daily_limit,
         min_delay=min_delay,
         max_delay=max_delay,
-        night_start=night_start,
-        night_end=night_end,
-        light_start=light_start,
-        light_end=light_end,
-        light_min_delay=light_min_delay,
-        light_max_delay=light_max_delay
+        cycle_delay=cycle_delay_seconds
     )
     return RedirectResponse(url="/config", status_code=303)
 

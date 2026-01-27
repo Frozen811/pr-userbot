@@ -156,8 +156,25 @@
               <form action="/config/update" method="POST">
                   <div class="mb-3">
                       <label class="form-label">Broadcast Message Template (Spintax)</label>
-                      <textarea name="message_template" class="form-control bg-black text-light border-secondary" rows="6">{{ config.message_template }}</textarea>
+                      <textarea name="message_template" class="form-control bg-black text-light border-secondary" rows="4">{{ config.message_template }}</textarea>
+                      <div class="form-text text-muted">Primary message. Used in Single and Dual modes.</div>
                   </div>
+
+                  <div class="card bg-dark border-secondary mb-3">
+                      <div class="card-body">
+                          <h6 class="card-title text-secondary">Dual Message Mode</h6>
+                          <div class="form-check form-switch mb-3">
+                              <input class="form-check-input" type="checkbox" name="use_dual_mode" id="dualModeSwitch" {% if config.use_dual_mode %}checked{% endif %}>
+                              <label class="form-check-label" for="dualModeSwitch">Enable Dual Mode (Send Template 1 -> Wait -> Template 2 -> Repeat)</label>
+                          </div>
+                          <div class="mb-3">
+                              <label class="form-label">Message Template 2 (Spintax)</label>
+                              <textarea name="message_template_2" class="form-control bg-black text-light border-secondary" rows="4">{{ config.message_template_2 }}</textarea>
+                              <div class="form-text text-muted">Secondary message. Only used if Dual Mode is enabled.</div>
+                          </div>
+                      </div>
+                  </div>
+
                   <div class="mb-3">
                       <label class="form-label">Daily Limit</label>
                       <input type="number" name="daily_limit" class="form-control bg-black text-light border-secondary" value="{{ config.daily_limit }}">
@@ -165,50 +182,22 @@
 
                   <h5 class="mt-4 mb-3 text-secondary">⏰ Timeouts & Schedule</h5>
 
-                  <div class="row g-3 mb-3">
-                      <div class="col-md-6">
-                          <label class="form-label">Normal Min Delay (Seconds)</label>
-                          <input type="number" name="min_delay" class="form-control bg-black text-light border-secondary" value="{{ config.min_delay }}">
-                          <div class="form-text text-muted">Active during day (excluding Light Mode).</div>
-                      </div>
-                      <div class="col-md-6">
-                          <label class="form-label">Normal Max Delay (Seconds)</label>
-                          <input type="number" name="max_delay" class="form-control bg-black text-light border-secondary" value="{{ config.max_delay }}">
-                          <div class="form-text text-muted">Active during day (excluding Light Mode).</div>
-                      </div>
+                  <div class="mb-3">
+                      <label class="form-label">Wait Between Cycles (Seconds)</label>
+                      <input type="number" name="cycle_delay_seconds" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.get('cycle_delay_seconds', 120) }}">
+                      <div class="form-text text-muted">Delay after finishing a list of chats (before starting next cycle or next message type). Default: 120s (2 mins).</div>
                   </div>
 
-                  <h6 class="text-secondary mt-3">🌙 Night Mode (Sleep)</h6>
                   <div class="row g-3 mb-3">
                       <div class="col-md-6">
-                          <label class="form-label">Start Hour (0-23)</label>
-                          <input type="number" name="night_start" min="0" max="23" class="form-control bg-black text-light border-secondary" value="{{ config.night_start }}">
-                          <div class="form-text text-muted">Bot stops sending at this hour.</div>
+                          <label class="form-label">Min Delay (Seconds)</label>
+                          <input type="number" name="min_delay" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.min_delay }}">
+                          <div class="form-text text-muted">Random sleep time AFTER sending a message.</div>
                       </div>
                       <div class="col-md-6">
-                          <label class="form-label">End Hour (0-23)</label>
-                          <input type="number" name="night_end" min="0" max="23" class="form-control bg-black text-light border-secondary" value="{{ config.night_end }}">
-                          <div class="form-text text-muted">Bot resumes sending at this hour.</div>
-                      </div>
-                  </div>
-
-                  <h6 class="text-secondary mt-3">💡 Light Mode (Slow Down)</h6>
-                  <div class="row g-3 mb-3">
-                      <div class="col-md-3">
-                          <label class="form-label">Start Hour</label>
-                          <input type="number" name="light_start" min="0" max="23" class="form-control bg-black text-light border-secondary" value="{{ config.get('light_start', 7) }}">
-                      </div>
-                      <div class="col-md-3">
-                          <label class="form-label">End Hour</label>
-                          <input type="number" name="light_end" min="0" max="23" class="form-control bg-black text-light border-secondary" value="{{ config.get('light_end', 14) }}">
-                      </div>
-                      <div class="col-md-3">
-                          <label class="form-label">Min Delay</label>
-                          <input type="number" name="light_min_delay" class="form-control bg-black text-light border-secondary" value="{{ config.get('light_min_delay', 60) }}">
-                      </div>
-                      <div class="col-md-3">
-                          <label class="form-label">Max Delay</label>
-                          <input type="number" name="light_max_delay" class="form-control bg-black text-light border-secondary" value="{{ config.get('light_max_delay', 120) }}">
+                          <label class="form-label">Max Delay (Seconds)</label>
+                          <input type="number" name="max_delay" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.max_delay }}">
+                          <div class="form-text text-muted">Random sleep time AFTER sending a message.</div>
                       </div>
                   </div>
 

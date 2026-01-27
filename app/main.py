@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import random
 import os
@@ -31,54 +30,6 @@ def log(message):
 # --- Constants ---
 SESSION_PATH = 'sessions/user_session' # Telethon adds .session automatically
 TZ_KYIV = timezone('Europe/Kyiv')
-
-def get_delay_and_mode(now_kyiv, settings):
-    hour = now_kyiv.hour
-    weekday = now_kyiv.weekday() # 0=Mon, 6=Sun
-
-    # Night Mode
-    night_start = settings.get('night_start', 22)
-    night_end = settings.get('night_end', 7)
-
-    # Normal Mode
-    normal_min = settings.get('min_delay', 30)
-    normal_max = settings.get('max_delay', 60)
-
-    # Light Mode
-    light_start = settings.get('light_start', 7)
-    light_end = settings.get('light_end', 14)
-    light_min = settings.get('light_min_delay', 60)
-    light_max = settings.get('light_max_delay', 120)
-
-    # 1. Check Sleep Mode (Configurable via Web)
-    is_night = False
-    if night_start > night_end:
-        # e.g. Start 22, End 7. Night is 22..23, 0..6
-        if hour >= night_start or hour < night_end:
-            is_night = True
-    else:
-        # e.g. Start 1, End 5. Night is 1..4
-        if night_start <= hour < night_end:
-            is_night = True
-
-    if is_night:
-        return None, "Sleep"
-
-    # 2. Check Light Mode
-    # Light mode precedence over Normal mode
-    is_light = False
-    if light_start > light_end:
-        if hour >= light_start or hour < light_end:
-            is_light = True
-    else:
-         if light_start <= hour < light_end:
-            is_light = True
-
-    if is_light:
-        return random.randint(light_min, light_max), "Light"
-
-    # 3. Normal Mode (Default)
-    return random.randint(normal_min, normal_max), "Normal"
 
 # --- Client Init ---
 client = TelegramClient(SESSION_PATH, config.API_ID, config.API_HASH)
@@ -144,24 +95,19 @@ async def cmd_del(event):
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.set (.+)'))
 async def cmd_set(event):
     text = event.pattern_match.group(1)
-    # Get current limit to preserve it
-    settings = await database.get_settings()
+    # Get current settings to preserve other values
+    s = await database.get_settings()
+
     await database.update_settings(
-        text,
-        settings['daily_limit'],
-        # Normal
-        settings.get('min_delay', 30),
-        settings.get('max_delay', 60),
-        # Night
-        settings.get('night_start', 22),
-        settings.get('night_end', 7),
-        # Light
-        settings.get('light_start', 7),
-        settings.get('light_end', 14),
-        settings.get('light_min_delay', 60),
-        settings.get('light_max_delay', 120),
+        template=text,
+        template_2=s.get('message_template_2', ''),
+        dual_mode=s.get('use_dual_mode', False),
+        limit=s['daily_limit'],
+        min_delay=s.get('min_delay', 30),
+        max_delay=s.get('max_delay', 60),
+        cycle_delay=s.get('cycle_delay_seconds', 120)
     )
-    await event.edit("📝 **Template Saved!**")
+    await event.edit("📝 **Template 1 Saved!**")
     log("Template updated via command.")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.list'))
@@ -236,7 +182,9 @@ async def on_new_reply(event):
 
 async def broadcast_loop():
     logger.info("Starting broadcast loop...")
-    session_counter = 0
+
+    # Track which message we are sending next. 1 or 2.
+    current_message_index = 1
 
     while True:
         try:
@@ -245,19 +193,11 @@ async def broadcast_loop():
                 await asyncio.sleep(5)
                 continue
 
-            # Schedule & Mode Check
-            now_kyiv = datetime.now(TZ_KYIV)
-            delay_seconds, mode = get_delay_and_mode(now_kyiv, settings)
-
-            if mode == "Sleep":
-                log(f"🌙 Sleep Mode active (Kyiv {now_kyiv.strftime('%H:%M')}). Sleeping 1h...")
-                await asyncio.sleep(3600)
-                continue
-
             # Check Limit
             daily_limit = settings['daily_limit']
 
             # Reset Check
+            now_kyiv = datetime.now(TZ_KYIV)
             last_reset_str = await database.get_stat('last_reset_date')
             today_str = now_kyiv.strftime('%Y-%m-%d')
 
@@ -281,60 +221,71 @@ async def broadcast_loop():
                 continue
 
             active_chats = [c for c in chats if c['status'] != 'error']
+            if not active_chats:
+                log("No active chats available. Sleeping 60s...")
+                await asyncio.sleep(60)
+                continue
+
             random.shuffle(active_chats)
+
+            # Determine text for this cycle
+            use_dual = settings.get('use_dual_mode', False)
+            template_1 = settings.get('message_template', '')
+            template_2 = settings.get('message_template_2', '')
+
+            if use_dual:
+                if current_message_index == 1:
+                    template_to_use = template_1
+                    log("🔄 Cycle: Dual Mode - Sending Message #1")
+                else:
+                    template_to_use = template_2
+                    log("🔄 Cycle: Dual Mode - Sending Message #2")
+            else:
+                # Single mode always uses template 1
+                template_to_use = template_1
+                current_message_index = 1 # reset just in case
+                log("🔄 Cycle: Single Mode - Sending Message #1")
+
+            if not template_to_use:
+                log(f"⚠️ Message Template #{current_message_index} is empty! Skipping cycle.")
+                await asyncio.sleep(60)
+                continue
 
             consecutive_errors = 0
 
             # Process chats
             for chat_row in active_chats:
-                # Re-check settings/mode/limit inside loop for responsiveness
+                # Re-check settings inside loop
                 settings = await database.get_settings()
                 if not settings['is_running']:
                     break
-
-                # Check mode again (e.g. if hour changed)
-                now_kyiv = datetime.now(TZ_KYIV)
-                delay_seconds, mode = get_delay_and_mode(now_kyiv, settings)
-                if mode == "Sleep":
-                    break # Break inner loop to go to outer loop sleep
 
                 chat_id = chat_row['chat_id']
                 chat_title = chat_row['chat_title']
 
                 # Check Mute logic
                 if chat_row['next_run_at']:
-                    # Aiosqlite might return string or ints depending on logic, let's parse safely
                     next_run_val = chat_row['next_run_at']
                     if next_run_val:
                         try:
-                            # It is stored as TIMESTAMP which usually comes back as string e.g., "2023-..." or int
+                            # Parse date logic...
                             if isinstance(next_run_val, str):
                                 next_run = datetime.fromisoformat(next_run_val)
                             elif isinstance(next_run_val, (int, float)):
                                 next_run = datetime.fromtimestamp(next_run_val)
                             else:
-                                next_run = next_run_val # already datetime?
+                                next_run = next_run_val
 
-                            # Ensure timezone awareness if needed, but safe comparison:
-                            # If next_run is naive, use naive now. If aware, use aware now.
-                            # Standardize to naive UTC or local for comparison
                             current_dt = datetime.now(next_run.tzinfo) if next_run.tzinfo else datetime.now()
 
                             if current_dt < next_run:
                                 continue
                             else:
-                                # Unmute
                                 await database.update_chat_status(chat_id, 'active', None, None)
                         except Exception as e:
                             logger.error(f"Date parse error for {chat_id}: {e}")
 
-                template = settings['message_template']
-                if not template:
-                    log("⚠️ No message template set!")
-                    await asyncio.sleep(60)
-                    break
-
-                text = spintax.process_spintax(template)
+                text = spintax.process_spintax(template_to_use)
 
                 # Get Media
                 media_path = await database.get_media_path()
@@ -366,17 +317,14 @@ async def broadcast_loop():
 
                     consecutive_errors = 0
 
-                    # 2. Coffee Break
-                    session_counter += 1
-                    if session_counter % random.randint(20, 35) == 0:
-                        long_sleep = random.randint(300, 900)
-                        log(f"☕ Coffee break for {long_sleep//60} mins...")
-                        await asyncio.sleep(long_sleep)
+                    # 2. Schedule Delay (Normal)
+                    min_d = settings.get('min_delay', 30)
+                    max_d = settings.get('max_delay', 60)
+                    delay_seconds = random.randint(min_d, max_d)
 
                     gc.collect()
 
-                    # 3. Schedule Delay
-                    log(f"⏳ Sleeping {delay_seconds}s ({mode} Mode)...")
+                    log(f"⏳ Sleeping {delay_seconds}s...")
                     await asyncio.sleep(delay_seconds)
 
                 except FloodWaitError as e:
@@ -385,20 +333,16 @@ async def broadcast_loop():
 
                 except (PeerIdInvalidError, ChatWriteForbiddenError, UserBannedInChannelError) as e:
                     log(f"❌ Banned/Invalid ({chat_title}). Deleting...")
-                    # Auto-Leave
                     try:
                         await client.delete_dialog(chat_id)
                     except:
                         pass
-                    # Delete from DB
                     await database.remove_chat(chat_id)
                     consecutive_errors += 1
 
                 except SlowModeWaitError as e:
                     log(f"🐌 Slowmode ({chat_title}): Wait {e.seconds}s")
-                    # Smart Slowmode: Mute, don't delete
                     next_run = datetime.now().timestamp() + e.seconds + 5
-                    # Store as ISO string for SQLite
                     next_run_dt = datetime.fromtimestamp(next_run)
                     await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error=f"Slowmode {e.seconds}s")
 
@@ -415,15 +359,19 @@ async def broadcast_loop():
                     await asyncio.sleep(5)
 
                 if consecutive_errors >= 5:
-                    log("🚨 Too many consecutive errors! Safety sleep 60 mins...")
-                    await asyncio.sleep(3600)
+                    log("🚨 Too many consecutive errors! Safety sleep 10 mins...")
+                    await asyncio.sleep(600)
                     consecutive_errors = 0
                     break
 
-            # End of list sleep
-            cycle_sleep = random.randint(1500, 2700)
-            log(f"End of list. Sleeping {cycle_sleep//60} mins...")
-            await asyncio.sleep(cycle_sleep)
+            # End of list cycle
+            # Toggle message index if Dual Mode is on
+            if use_dual:
+                current_message_index = 2 if current_message_index == 1 else 1
+
+            cycle_delay = settings.get('cycle_delay_seconds', 120)
+            log(f"🏁 End of cycle. Sleeping {cycle_delay}s...")
+            await asyncio.sleep(cycle_delay)
 
         except Exception as e:
             logger.error(f"Critical Loop Error: {e}", exc_info=True)

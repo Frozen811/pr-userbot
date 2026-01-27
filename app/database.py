@@ -12,16 +12,19 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 message_template TEXT DEFAULT "",
+                message_template_2 TEXT DEFAULT "",
                 daily_limit INTEGER DEFAULT 400,
                 is_running BOOLEAN DEFAULT 0,
                 min_delay INTEGER DEFAULT 30,
                 max_delay INTEGER DEFAULT 60,
-                night_start INTEGER DEFAULT 22,
-                night_end INTEGER DEFAULT 7,
+                cycle_delay_seconds INTEGER DEFAULT 120,
                 light_start INTEGER DEFAULT 7,
                 light_end INTEGER DEFAULT 14,
                 light_min_delay INTEGER DEFAULT 60,
-                light_max_delay INTEGER DEFAULT 120
+                light_max_delay INTEGER DEFAULT 120,
+                night_start INTEGER DEFAULT 22,
+                night_end INTEGER DEFAULT 7,
+                use_dual_mode BOOLEAN DEFAULT 0
             )
         ''')
 
@@ -70,6 +73,12 @@ async def init_db():
             await db.execute("ALTER TABLE settings ADD COLUMN light_min_delay INTEGER DEFAULT 60")
         if 'light_max_delay' not in columns:
             await db.execute("ALTER TABLE settings ADD COLUMN light_max_delay INTEGER DEFAULT 120")
+        if 'cycle_delay_seconds' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN cycle_delay_seconds INTEGER DEFAULT 120")
+        if 'message_template_2' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN message_template_2 TEXT DEFAULT ''")
+        if 'use_dual_mode' not in columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN use_dual_mode BOOLEAN DEFAULT 0")
 
         # Migration: Check columns in chats
         async with db.execute("PRAGMA table_info(chats)") as cursor:
@@ -95,25 +104,22 @@ async def get_settings():
                 return dict(row)
             return {
                 "message_template": "",
+                "message_template_2": "",
+                "use_dual_mode": 0,
                 "daily_limit": 400,
                 "is_running": 0,
                 "min_delay": 30,
                 "max_delay": 60,
-                "night_start": 22,
-                "night_end": 7,
-                "light_start": 7,
-                "light_end": 14,
-                "light_min_delay": 60,
-                "light_max_delay": 120
+                "cycle_delay_seconds": 120
             }
 
-async def update_settings(template: str, limit: int, min_delay: int, max_delay: int, night_start: int, night_end: int, light_start: int, light_end: int, light_min_delay: int, light_max_delay: int):
+async def update_settings(template: str, template_2: str, dual_mode: bool, limit: int, min_delay: int, max_delay: int, cycle_delay: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
             UPDATE settings 
-            SET message_template = ?, daily_limit = ?, min_delay = ?, max_delay = ?, night_start = ?, night_end = ?, light_start = ?, light_end = ?, light_min_delay = ?, light_max_delay = ? 
+            SET message_template = ?, message_template_2 = ?, use_dual_mode = ?, daily_limit = ?, min_delay = ?, max_delay = ?, cycle_delay_seconds = ?
             WHERE id = 1
-        ''', (template, limit, min_delay, max_delay, night_start, night_end, light_start, light_end, light_min_delay, light_max_delay))
+        ''', (template, template_2, dual_mode, limit, min_delay, max_delay, cycle_delay))
         await db.commit()
 
 async def set_running_status(is_running: bool):
