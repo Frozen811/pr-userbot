@@ -364,6 +364,27 @@ async def broadcast_loop():
                         except Exception as e:
                             logger.error(f"Date parse error for {chat_id}: {e}")
 
+                # Check Cooldown
+                cooldown_until = await database.get_chat_cooldown(chat_id)
+                if cooldown_until:
+                    try:
+                        # cooldown_until might be stored as string or int
+                        if isinstance(cooldown_until, str):
+                            cd_dt = datetime.fromisoformat(cooldown_until)
+                        elif isinstance(cooldown_until, (int, float)):
+                            cd_dt = datetime.fromtimestamp(cooldown_until)
+                        else:
+                            cd_dt = cooldown_until
+
+                        # Ensure timezone awareness compatibility
+                        current_dt = datetime.now(cd_dt.tzinfo) if cd_dt.tzinfo else datetime.now()
+
+                        if current_dt < cd_dt:
+                            log(f"⏳ Skipping {chat_title} (cooldown active until {cd_dt})")
+                            continue
+                    except Exception as e:
+                        logger.error(f"Cooldown parse error {chat_id}: {e}")
+
                 text = spintax.process_spintax(template_to_use)
 
                 # Get Media
@@ -407,8 +428,19 @@ async def broadcast_loop():
                     await asyncio.sleep(delay_seconds)
 
                 except FloodWaitError as e:
-                    log(f"🌊 FLOOD WAIT: Sleeping {e.seconds}s")
-                    await asyncio.sleep(e.seconds)
+                    log(f"🌊 FLOOD WAIT ({chat_title}): {e.seconds}s. Adding chat cooldown.")
+                    # Set cooldown for this specific chat
+                    cooldown_time = datetime.now().timestamp() + e.seconds + 3
+                    await database.set_chat_cooldown(chat_id, cooldown_time)
+                    # We do NOT sleep the whole loop here, just skip this chat next time
+                    # But if it's a global floodwait, Telethon might auto-sleep or raise.
+                    # FloodWaitError usually means per-request, but can be global.
+                    # If it's very long, it might be better to sleep, but requirement says "per-chat cooldown".
+                    # However, if we get FloodWait on one chat, we might get it on others if it's global.
+                    # Assuming per-chat or short waits. If e.seconds is huge, we might want to respect it globally?
+                    # The prompt says: "per-chat cooldown... sending to other chats should not stop".
+                    # So we just save cooldown and continue.
+                    await asyncio.sleep(random.randint(2, 5)) # small sleep before next chat
 
                 except (PeerIdInvalidError, ChatWriteForbiddenError, UserBannedInChannelError) as e:
                     log(f"❌ Banned/Invalid ({chat_title}). Deleting...")
@@ -420,10 +452,14 @@ async def broadcast_loop():
                     consecutive_errors += 1
 
                 except SlowModeWaitError as e:
-                    log(f"🐌 Slowmode ({chat_title}): Wait {e.seconds}s")
-                    next_run = datetime.now().timestamp() + e.seconds + 5
-                    next_run_dt = datetime.fromtimestamp(next_run)
-                    await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error=f"Slowmode {e.seconds}s")
+                    log(f"🐌 Slowmode ({chat_title}): Wait {e.seconds}s. Adding chat cooldown.")
+                    cooldown_time = datetime.now().timestamp() + e.seconds + 3
+                    await database.set_chat_cooldown(chat_id, cooldown_time)
+
+                    # Also update status for UI visibility if needed, but cooldown table handles logic
+                    # next_run = datetime.now().timestamp() + e.seconds + 5
+                    # next_run_dt = datetime.fromtimestamp(next_run)
+                    # await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error=f"Slowmode {e.seconds}s")
 
                 except ChatRestrictedError:
                     log(f"🔇 Restricted ({chat_title}). Muting for 2h.")

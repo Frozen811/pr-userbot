@@ -45,6 +45,13 @@ async def init_db():
             )
         ''')
 
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS chat_cooldowns (
+                chat_id INTEGER PRIMARY KEY,
+                cooldown_until TIMESTAMP
+            )
+        ''')
+
         # Initialize settings
         async with db.execute('SELECT count(*) FROM settings') as cursor:
             count = (await cursor.fetchone())[0]
@@ -173,3 +180,16 @@ async def set_media_path(path: str):
 
 async def get_media_path():
     return await get_stat('media_path')
+
+async def get_chat_cooldown(chat_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute('SELECT cooldown_until FROM chat_cooldowns WHERE chat_id = ?', (chat_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row and row[0]:
+                return row[0]
+            return None
+
+async def set_chat_cooldown(chat_id: int, cooldown_until):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('INSERT OR REPLACE INTO chat_cooldowns (chat_id, cooldown_until) VALUES (?, ?)', (chat_id, cooldown_until))
+        await db.commit()
