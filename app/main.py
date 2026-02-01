@@ -238,6 +238,12 @@ async def on_new_reply(event):
 async def broadcast_loop():
     logger.info("Starting broadcast loop...")
 
+    # Fetch User ID for Anti-Spam checks
+    me = await client.get_me()
+    my_id = me.id if me else None
+    if not my_id:
+        log("⚠️ Creating broadcast loop without 'my_id' (Anti-Double-Post unavailable).")
+
     # Track which message we are sending next. 1 or 2.
     current_message_index = 1
 
@@ -341,6 +347,18 @@ async def broadcast_loop():
 
                 chat_id = chat_row['chat_id']
                 chat_title = chat_row['chat_title']
+
+                # --- Anti-Double-Post Protection (Custom Chats Only) ---
+                if chat_row.get('is_custom') and my_id:
+                    try:
+                        messages = await client.get_messages(chat_id, limit=1)
+                        if messages and messages[0].sender_id == my_id:
+                            log(f"✋ Skip {chat_title}: Last message is mine")
+                            continue
+                    except Exception as e:
+                        # If we can't read history (e.g. private channel), just proceed safe
+                        # log(f"Could not check history for {chat_title}: {e}")
+                        pass
 
                 # Check Mute logic
                 if chat_row['next_run_at']:
