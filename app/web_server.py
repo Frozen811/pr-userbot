@@ -30,8 +30,11 @@ async def dashboard(request: Request):
     chats = await database.get_chats()
     active_chats = sum(1 for c in chats if c['status'] == 'active')
     error_chats = sum(1 for c in chats if c['status'] == 'error')
+    custom_chats = [c for c in chats if c.get('is_custom')]
 
     settings = await database.get_settings()
+    global_min = settings.get('min_delay', 30)
+    global_max = settings.get('max_delay', 60)
 
     return templates.TemplateResponse("index.html", {
         "request": request,
@@ -40,7 +43,10 @@ async def dashboard(request: Request):
         "active_chats_count": active_chats,
         "error_chats_count": error_chats,
         "total_chats_count": len(chats),
-        "limit": settings.get('daily_limit', 400)
+        "limit": settings.get('daily_limit', 400),
+        "custom_chats": custom_chats,
+        "global_min": global_min,
+        "global_max": global_max
     })
 
 @app.get("/logs", response_class=HTMLResponse)

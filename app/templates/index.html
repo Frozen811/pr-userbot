@@ -83,6 +83,55 @@
             <li class="list-group-item bg-dark text-light border-secondary">Total DB Chats: <span class="float-end">{{ total_chats_count }}</span></li>
         </ul>
       </div>
+
+      <div class="mt-5">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4>⚡ Schedule Overview</h4>
+            <div class="badge bg-primary fs-6">
+                Global Delay: {{ global_min }}s - {{ global_max }}s
+            </div>
+        </div>
+
+        {% if custom_chats %}
+        <div class="card bg-dark border-secondary">
+            <div class="card-header border-secondary text-info">
+                Configuration Override: Custom Chats
+            </div>
+            <div class="table-responsive">
+                <table class="table table-dark table-hover mb-0">
+                    <thead>
+                        <tr class="text-secondary">
+                            <th>Chat Name</th>
+                            <th>Min Delay</th>
+                            <th>Max Delay</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for chat in custom_chats %}
+                        <tr>
+                            <td>{{ chat.chat_title }}</td>
+                            <td class="text-info">{{ chat.custom_min_delay }}s</td>
+                            <td class="text-info">{{ chat.custom_max_delay }}s</td>
+                            <td>
+                                {% if chat.status == 'active' %}
+                                <span class="badge bg-success">Active</span>
+                                {% else %}
+                                <span class="badge bg-secondary">{{ chat.status }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% else %}
+        <div class="alert alert-dark border-secondary text-muted">
+            All chats are following the global default schedule. No custom overrides active.
+        </div>
+        {% endif %}
+      </div>
       {% endif %}
 
       <!-- LOGS -->
