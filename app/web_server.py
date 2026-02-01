@@ -65,6 +65,16 @@ async def delete_chat(chat_id: int = Form(...)):
     await database.remove_chat(chat_id)
     return RedirectResponse(url="/chats", status_code=303)
 
+@app.post("/chats/settings")
+async def update_chat_settings(
+    chat_id: int = Form(...),
+    is_custom: bool = Form(False),
+    custom_min_delay: int = Form(30),
+    custom_max_delay: int = Form(60)
+):
+    await database.update_chat_settings(chat_id, is_custom, custom_min_delay, custom_max_delay)
+    return RedirectResponse(url="/chats", status_code=303)
+
 @app.get("/config", response_class=HTMLResponse)
 async def config_page(request: Request):
     conf = await database.get_settings()

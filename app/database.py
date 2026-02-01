@@ -100,6 +100,14 @@ async def init_db():
         if 'last_error' not in columns:
             await db.execute("ALTER TABLE chats ADD COLUMN last_error TEXT")
 
+        # Safe Migration for Custom Schedules
+        if 'custom_min_delay' not in columns:
+            await db.execute("ALTER TABLE chats ADD COLUMN custom_min_delay INTEGER DEFAULT 0")
+        if 'custom_max_delay' not in columns:
+            await db.execute("ALTER TABLE chats ADD COLUMN custom_max_delay INTEGER DEFAULT 0")
+        if 'is_custom' not in columns:
+            await db.execute("ALTER TABLE chats ADD COLUMN is_custom BOOLEAN DEFAULT 0")
+
         await db.commit()
 
 async def get_settings():
@@ -162,6 +170,15 @@ async def update_chat_status(chat_id: int, status: str, next_run_at=None, last_e
             SET status = ?, next_run_at = ?, last_error = ? 
             WHERE chat_id = ?
         ''', (status, next_run_at, last_error, chat_id))
+        await db.commit()
+
+async def update_chat_settings(chat_id: int, is_custom: bool, custom_min_delay: int, custom_max_delay: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            UPDATE chats 
+            SET is_custom = ?, custom_min_delay = ?, custom_max_delay = ?
+            WHERE chat_id = ?
+        ''', (is_custom, custom_min_delay, custom_max_delay, chat_id))
         await db.commit()
 
 async def update_stat(key: str, value: str):

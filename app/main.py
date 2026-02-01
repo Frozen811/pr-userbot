@@ -418,8 +418,18 @@ async def broadcast_loop():
                     consecutive_errors = 0
 
                     # 2. Schedule Delay (Normal)
-                    min_d = settings.get('min_delay', 30)
-                    max_d = settings.get('max_delay', 60)
+                    if chat_row.get('is_custom'):
+                        min_d = chat_row.get('custom_min_delay', 30)
+                        max_d = chat_row.get('custom_max_delay', 60)
+                        # Ensure safe values
+                        min_d = min_d if min_d and min_d > 0 else 30
+                        max_d = max_d if max_d and max_d > 0 else 60
+                        if min_d > max_d: min_d, max_d = max_d, min_d
+                        log(f"⏰ Custom Schedule for {chat_title}: {min_d}-{max_d}s")
+                    else:
+                        min_d = settings.get('min_delay', 30)
+                        max_d = settings.get('max_delay', 60)
+
                     delay_seconds = random.randint(min_d, max_d)
 
                     gc.collect()
