@@ -92,6 +92,37 @@
             </div>
         </div>
 
+        <!-- Add/Edit Custom Rule Form -->
+        <div class="card bg-dark border-secondary mb-4">
+            <div class="card-header border-secondary text-white">
+                ⚡ Add/Edit Custom Rule
+            </div>
+            <div class="card-body">
+                <form action="/api/settings/custom_chat" method="POST" class="row g-3 align-items-end">
+                    <div class="col-md-6">
+                        <label class="form-label">Select Chat</label>
+                        <select name="chat_id" class="form-select bg-black text-light border-secondary" required>
+                            <option value="" selected disabled>-- Select Chat --</option>
+                            {% for chat in chats %}
+                            <option value="{{ chat.chat_id }}">{{ chat.chat_title }} ({{ chat.chat_id }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                         <label class="form-label">Min (s)</label>
+                         <input type="number" name="min_delay" class="form-control bg-black text-light border-secondary" required value="30">
+                    </div>
+                    <div class="col-md-2">
+                         <label class="form-label">Max (s)</label>
+                         <input type="number" name="max_delay" class="form-control bg-black text-light border-secondary" required value="60">
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-primary w-100">Save Rule</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         {% if custom_chats %}
         <div class="card bg-dark border-secondary">
             <div class="card-header border-secondary text-info">
@@ -105,6 +136,7 @@
                             <th>Min Delay</th>
                             <th>Max Delay</th>
                             <th>Status</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -119,6 +151,12 @@
                                 {% else %}
                                 <span class="badge bg-secondary">{{ chat.status }}</span>
                                 {% endif %}
+                            </td>
+                            <td>
+                                <form action="/api/settings/remove_custom_chat" method="POST" style="display:inline;">
+                                    <input type="hidden" name="chat_id" value="{{ chat.chat_id }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">❌ Remove</button>
+                                </form>
                             </td>
                         </tr>
                         {% endfor %}

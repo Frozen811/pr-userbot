@@ -173,12 +173,13 @@ async def update_chat_status(chat_id: int, status: str, next_run_at=None, last_e
         await db.commit()
 
 async def update_chat_settings(chat_id: int, is_custom: bool, custom_min_delay: int, custom_max_delay: int):
+    val_custom = 1 if is_custom else 0
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
             UPDATE chats 
             SET is_custom = ?, custom_min_delay = ?, custom_max_delay = ?
             WHERE chat_id = ?
-        ''', (is_custom, custom_min_delay, custom_max_delay, chat_id))
+        ''', (val_custom, custom_min_delay, custom_max_delay, chat_id))
         await db.commit()
 
 async def update_stat(key: str, value: str):

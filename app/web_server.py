@@ -30,7 +30,7 @@ async def dashboard(request: Request):
     chats = await database.get_chats()
     active_chats = sum(1 for c in chats if c['status'] == 'active')
     error_chats = sum(1 for c in chats if c['status'] == 'error')
-    custom_chats = [c for c in chats if c.get('is_custom')]
+    custom_chats = [c for c in chats if c.get('is_custom') == 1]
 
     settings = await database.get_settings()
     global_min = settings.get('min_delay', 30)
@@ -45,9 +45,26 @@ async def dashboard(request: Request):
         "total_chats_count": len(chats),
         "limit": settings.get('daily_limit', 400),
         "custom_chats": custom_chats,
+        "chats": chats,
         "global_min": global_min,
         "global_max": global_max
     })
+
+@app.post("/api/settings/custom_chat")
+async def api_set_custom_chat(
+    chat_id: int = Form(...),
+    min_delay: int = Form(...),
+    max_delay: int = Form(...)
+):
+    await database.update_chat_settings(chat_id, True, min_delay, max_delay)
+    return RedirectResponse(url="/", status_code=303)
+
+@app.post("/api/settings/remove_custom_chat")
+async def api_remove_custom_chat(
+    chat_id: int = Form(...)
+):
+    await database.update_chat_settings(chat_id, False, 0, 0)
+    return RedirectResponse(url="/", status_code=303)
 
 @app.get("/logs", response_class=HTMLResponse)
 async def logs(request: Request):
