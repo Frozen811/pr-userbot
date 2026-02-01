@@ -1,11 +1,12 @@
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, Body
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 import uvicorn
 import asyncio
 from app import database
 import os
 from collections import deque
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -20,6 +21,15 @@ log_buffer = deque(maxlen=50)
 def add_log(message: str):
     log_buffer.append(message)
 
+# Pydantic models for JSON requests
+class CustomChatRequest(BaseModel):
+    chat_id: int
+    min_delay: int
+    max_delay: int
+
+class RemoveCustomChatRequest(BaseModel):
+    chat_id: int
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     stats = {}
@@ -30,6 +40,8 @@ async def dashboard(request: Request):
     chats = await database.get_chats()
     active_chats = sum(1 for c in chats if c['status'] == 'active')
     error_chats = sum(1 for c in chats if c['status'] == 'error')
+    
+    # Filter for custom chats
     custom_chats = [c for c in chats if c.get('is_custom') == 1]
 
     settings = await database.get_settings()
@@ -45,26 +57,20 @@ async def dashboard(request: Request):
         "total_chats_count": len(chats),
         "limit": settings.get('daily_limit', 400),
         "custom_chats": custom_chats,
-        "chats": chats,
+        "all_chats": chats, # Pass all chats for the dropdown
         "global_min": global_min,
         "global_max": global_max
     })
 
 @app.post("/api/settings/custom_chat")
-async def api_set_custom_chat(
-    chat_id: int = Form(...),
-    min_delay: int = Form(...),
-    max_delay: int = Form(...)
-):
-    await database.update_chat_settings(chat_id, True, min_delay, max_delay)
-    return RedirectResponse(url="/", status_code=303)
+async def api_set_custom_chat(data: CustomChatRequest):
+    await database.update_chat_settings(data.chat_id, True, data.min_delay, data.max_delay)
+    return {"status": "success"}
 
 @app.post("/api/settings/remove_custom_chat")
-async def api_remove_custom_chat(
-    chat_id: int = Form(...)
-):
-    await database.update_chat_settings(chat_id, False, 0, 0)
-    return RedirectResponse(url="/", status_code=303)
+async def api_remove_custom_chat(data: RemoveCustomChatRequest):
+    await database.update_chat_settings(data.chat_id, False, 0, 0)
+    return {"status": "success"}
 
 @app.get("/logs", response_class=HTMLResponse)
 async def logs(request: Request):
@@ -86,16 +92,6 @@ async def chats(request: Request):
 @app.post("/chats/delete")
 async def delete_chat(chat_id: int = Form(...)):
     await database.remove_chat(chat_id)
-    return RedirectResponse(url="/chats", status_code=303)
-
-@app.post("/chats/settings")
-async def update_chat_settings(
-    chat_id: int = Form(...),
-    is_custom: bool = Form(False),
-    custom_min_delay: int = Form(30),
-    custom_max_delay: int = Form(60)
-):
-    await database.update_chat_settings(chat_id, is_custom, custom_min_delay, custom_max_delay)
     return RedirectResponse(url="/chats", status_code=303)
 
 @app.get("/config", response_class=HTMLResponse)
