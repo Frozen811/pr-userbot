@@ -162,7 +162,7 @@ async def cmd_dual(event):
         cycle_delay=s.get('cycle_delay_seconds', 120)
     )
     status_text = "Enabled" if enable else "Disabled"
-    await event.edit(f"🔄 **Dual Mode {status_text!}**")
+    await event.edit(f"🔄 **Dual Mode {status_text}!**")
     log(f"Dual mode {status_text.lower()} via command.")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.list'))
