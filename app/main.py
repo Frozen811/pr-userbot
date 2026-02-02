@@ -162,7 +162,7 @@ async def cmd_dual(event):
         cycle_delay=s.get('cycle_delay_seconds', 120)
     )
     status_text = "Enabled" if enable else "Disabled"
-    await event.edit(f"🔄 **Dual Mode {status_text}!**")
+    await event.edit(f"🔄 **Dual Mode {status_text!}**")
     log(f"Dual mode {status_text.lower()} via command.")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.list'))
@@ -348,8 +348,8 @@ async def broadcast_loop():
                 chat_id = chat_row['chat_id']
                 chat_title = chat_row['chat_title']
 
-                # --- Anti-Double-Post Protection (Custom Chats Only) ---
-                if chat_row.get('is_custom') and my_id:
+                # --- Anti-Double-Post Protection (Global) ---
+                if my_id:
                     try:
                         messages = await client.get_messages(chat_id, limit=1)
                         if messages and messages[0].sender_id == my_id:

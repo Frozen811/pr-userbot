@@ -1,36 +1,45 @@
-# --- НАСТРОЙКИ ---
-$ServerIP = "46.101.251.219"
-$BotPath = "/root/pr-userbot"
-$Branch = "main"
-# -----------------
+$ErrorActionPreference = "Stop"
 
-# 1. GitHub Push
-Write-Host ">>> 1. Pushing to GitHub..." -ForegroundColor Cyan
+# -------- НАСТРОЙКИ --------
+$ServerIP     = "64.226.96.158"
+$BotPath      = "/opt/bots/pr-userbot"
+$BotsRoot     = "/opt/bots"
+$ServiceName  = "pr-userbot"
+$Branch       = "main"
+$KeyPath      = "$env:USERPROFILE\.ssh\id_ed25519_do"
+# ---------------------------
+
+Write-Host ">>> 1) Pushing changes to GitHub..." -ForegroundColor Cyan
 git add .
-git commit -m "Auto-deploy update"
+git diff --cached --quiet
+if ($LASTEXITCODE -ne 0) {
+  git commit -m "Deploy $ServiceName"
+} else {
+  Write-Host ">>> No changes to commit." -ForegroundColor Yellow
+}
 git push origin $Branch
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Git push failed!" -ForegroundColor Red
-    exit
-}
+Write-Host ">>> 2) Copying .env to server..." -ForegroundColor Cyan
+scp -i "$KeyPath" -o IdentitiesOnly=yes .env "root@${ServerIP}:${BotPath}/.env"
 
-# 2. Server Update + Docker Restart
-Write-Host ">>> 2. Connecting to Droplet (Docker)..." -ForegroundColor Cyan
+Write-Host ">>> 3) Deploying on server $ServerIP..." -ForegroundColor Cyan
 
-# Мы используем 'docker compose' (новый стандарт) или 'docker-compose' (старый).
-# Эта команда: заходит в папку -> качает код -> пересобирает контейнер
-$RemoteCommands = "cd $BotPath && git pull origin $Branch && docker-compose down && docker-compose up -d --build"
+$RemoteCommands = @"
+set -e
 
-ssh root@$ServerIP $RemoteCommands
+cd $BotPath
+git fetch --all
+git reset --hard origin/$Branch
 
-Write-Host ">>> DONE! Bot is updated and running in Docker." -ForegroundColor Green
+cd $BotsRoot
+docker compose build $ServiceName
+docker compose up -d $ServiceName
+docker compose ps $ServiceName
+docker compose logs --tail=120 $ServiceName
+"@
+
+$RemoteCommands = $RemoteCommands -replace "`r",""
+ssh -i "$KeyPath" -o IdentitiesOnly=yes root@$ServerIP "bash -lc '$RemoteCommands'"
+
+Write-Host ">>> DONE! $ServiceName updated and restarted." -ForegroundColor Green
 Write-Host ">>> Admin Panel: http://admin.extr3me.me:8080" -ForegroundColor Cyan
-Write-Host " "
-Write-Host ">>> 3. LIVE LOGS (For QR Code or Errors)" -ForegroundColor Yellow
-Write-Host ">>> NOTE: Press CTRL+C to stop watching logs." -ForegroundColor Yellow
-Write-Host ">>>       The bot will CONTINUE running in the background!" -ForegroundColor Yellow
-Write-Host " "
-Start-Sleep -Seconds 2
-ssh -t root@$ServerIP "docker logs -f telegram_userbot"
-
