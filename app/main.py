@@ -50,25 +50,25 @@ async def cmd_setmedia(event):
             except:
                 pass
         await database.set_media_path("")
-        await event.edit("🗑 Media removed.")
-        log("Media removed by user.")
+        await event.edit("🗑 Медиа удалено.")
+        log("Медиа удалено пользователем.")
         return
 
     reply = await event.get_reply_message()
     if not reply or not reply.media:
-        await event.edit("⚠️ Reply to a photo/video with `.setmedia`")
+        await event.edit("⚠️ Ответьте на фото/видео командой `.setmedia`")
         return
 
-    await event.edit("📥 Downloading media...")
+    await event.edit("📥 Скачиваю медиа...")
     try:
         # Download to app/data/broadcast_media (Telethon adds extension)
         path = await reply.download_media(file='app/data/broadcast_media')
         await database.set_media_path(path)
-        await event.edit("✅ Media saved!")
-        log(f"Media set: {path}")
+        await event.edit("✅ Медиа сохранено!")
+        log(f"Медиа установлено: {path}")
     except Exception as e:
-        await event.edit(f"❌ Error: {e}")
-        logger.error(f"Media download error: {e}")
+        await event.edit(f"❌ Ошибка: {e}")
+        logger.error(f"Ошибка загрузки медиа: {e}")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.add'))
 async def cmd_add(event):
@@ -78,12 +78,12 @@ async def cmd_add(event):
 
     success = await database.add_chat(chat_id, chat_title)
     if success:
-        await event.edit(f"✅ Saved chat: **{chat_title}**")
-        log(f"Added chat: {chat_title} ({chat_id})")
+        await event.edit(f"✅ Чат сохранён: **{chat_title}**")
+        log(f"Добавлен чат: {chat_title} ({chat_id})")
         await asyncio.sleep(3)
         await event.delete()
     else:
-        await event.edit(f"⚠️ Chat **{chat_title}** is already saved.")
+        await event.edit(f"⚠️ Чат **{chat_title}** уже есть в базе.")
         await asyncio.sleep(3)
         await event.delete()
 
@@ -91,8 +91,8 @@ async def cmd_add(event):
 async def cmd_del(event):
     chat = await event.get_chat()
     await database.remove_chat(chat.id)
-    await event.edit(f"🗑 Removed: **{getattr(chat, 'title', chat.id)}**")
-    log(f"Removed chat: {getattr(chat, 'title', chat.id)}")
+    await event.edit(f"🗑 Удалён: **{getattr(chat, 'title', chat.id)}**")
+    log(f"Удалён чат: {getattr(chat, 'title', chat.id)}")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.set (.+)'))
 async def cmd_set(event):
@@ -118,8 +118,8 @@ async def cmd_set(event):
         max_delay=s.get('max_delay', 60),
         cycle_delay=s.get('cycle_delay_seconds', 120)
     )
-    await event.edit("📝 **Template 1 Saved!**")
-    log("Template updated via command.")
+    await event.edit("📝 **Шаблон 1 сохранён!**")
+    log("Шаблон обновлён через команду.")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.set2 (.+)'))
 async def cmd_set2(event):
@@ -143,8 +143,8 @@ async def cmd_set2(event):
         max_delay=s.get('max_delay', 60),
         cycle_delay=s.get('cycle_delay_seconds', 120)
     )
-    await event.edit("📝 **Template 2 Saved!**")
-    log("Template 2 updated via command.")
+    await event.edit("📝 **Шаблон 2 сохранён!**")
+    log("Шаблон 2 обновлён через команду.")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.dual (on|off)'))
 async def cmd_dual(event):
@@ -161,18 +161,18 @@ async def cmd_dual(event):
         max_delay=s.get('max_delay', 60),
         cycle_delay=s.get('cycle_delay_seconds', 120)
     )
-    status_text = "Enabled" if enable else "Disabled"
-    await event.edit(f"🔄 **Dual Mode {status_text}!**")
-    log(f"Dual mode {status_text.lower()} via command.")
+    status_text = "включён" if enable else "выключен"
+    await event.edit(f"🔄 **Двойной режим {status_text}!**")
+    log(f"Двойной режим {status_text} через команду.")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.list'))
 async def cmd_list(event):
     chats = await database.get_chats()
     if not chats:
-        await event.edit("No chats saved.")
+        await event.edit("Список чатов пуст.")
         return
 
-    msg = ["📋 **Saved Chats:**"]
+    msg = ["📋 **Сохранённые чаты:**"]
     for i, c in enumerate(chats, 1):
         status = c['status']
         icon = "✅" if status == 'active' else "⚠️" if status == 'muted' else "❌"
@@ -183,14 +183,14 @@ async def cmd_list(event):
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.start'))
 async def cmd_start(event):
     await database.set_running_status(True)
-    await event.edit("🚀 **Broadcast Started!**")
-    log("Broadcast started manually.")
+    await event.edit("🚀 **Рассылка запущена!**")
+    log("Рассылка запущена вручную.")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.stop'))
 async def cmd_stop(event):
     await database.set_running_status(False)
-    await event.edit("🛑 **Broadcast Stopped!**")
-    log("Broadcast stopped manually.")
+    await event.edit("🛑 **Рассылка остановлена!**")
+    log("Рассылка остановлена вручную.")
 
 # --- Event Listeners ---
 
@@ -210,20 +210,20 @@ async def on_new_reply(event):
 
         # Get Chat Details
         chat = await event.get_chat()
-        chat_title = getattr(chat, 'title', 'Private Chat')
+        chat_title = getattr(chat, 'title', 'Личный чат')
 
         # Get Sender Details
         sender = await event.get_sender()
-        sender_name = getattr(sender, 'first_name', 'Unknown')
+        sender_name = getattr(sender, 'first_name', 'Неизвестно')
 
         # Construct Notification
-        log(f"🔔 New Reply detected in {chat_title} from {sender_name}")
+        log(f"🔔 Новый ответ в {chat_title} от {sender_name}")
 
         notification_text = (
-            f"🔔 **Lead Detected!**\n\n"
-            f"📍 **Chat:** {chat_title}\n"
-            f"👤 **User:** {sender_name}\n\n"
-            f"💬 **Message:**\n{event.text}"
+            f"🔔 **Обнаружен отклик!**\n\n"
+            f"📍 **Чат:** {chat_title}\n"
+            f"👤 **Пользователь:** {sender_name}\n\n"
+            f"💬 **Сообщение:**\n{event.text}"
         )
 
         # Send to Saved Messages (me)
@@ -231,18 +231,18 @@ async def on_new_reply(event):
         await event.forward_to('me') # Also forward the actual message context
 
     except Exception as e:
-        logger.error(f"Error in Lead Catcher: {e}")
+        logger.error(f"Ошибка в перехватчике откликов: {e}")
 
 # --- Broadcast Loop ---
 
 async def broadcast_loop():
-    logger.info("Starting broadcast loop...")
+    logger.info("Запуск цикла рассылки...")
 
     # Fetch User ID for Anti-Spam checks
     me = await client.get_me()
     my_id = me.id if me else None
     if not my_id:
-        log("⚠️ Creating broadcast loop without 'my_id' (Anti-Double-Post unavailable).")
+        log("⚠️ Цикл рассылки запущен без 'my_id' (анти-дубль недоступен).")
 
     # Track which message we are sending next. 1 or 2.
     current_message_index = 1
@@ -265,7 +265,7 @@ async def broadcast_loop():
             if last_reset_str != today_str:
                 await database.update_stat('daily_sent', "0")
                 await database.update_stat('last_reset_date', today_str)
-                log(f"📅 New day! Daily limit reset. ({today_str})")
+                log(f"📅 Новый день! Дневной лимит сброшен. ({today_str})")
 
             total_sent_today = int(await database.get_stat('daily_sent') or 0)
 
@@ -276,22 +276,22 @@ async def broadcast_loop():
                 daily_limit = settings['daily_limit']
                 
                 if total_sent_today >= daily_limit:
-                    log(f"🛑 Daily limit reached ({total_sent_today}/{daily_limit}). Sleeping 60s...")
+                    log(f"🛑 Дневной лимит достигнут ({total_sent_today}/{daily_limit}). Пауза 60с...")
                     await asyncio.sleep(60)
                     continue
                 else:
-                    log(f"✅ Limit increased! Resuming... ({total_sent_today}/{daily_limit})")
+                    log(f"✅ Лимит увеличен! Продолжаю... ({total_sent_today}/{daily_limit})")
 
             # Get Chats
             chats = await database.get_chats()
             if not chats:
-                log("No chats in DB. Sleeping 60s...")
+                log("В БД нет чатов. Пауза 60с...")
                 await asyncio.sleep(60)
                 continue
 
             active_chats = [c for c in chats if c['status'] != 'error']
             if not active_chats:
-                log("No active chats available. Sleeping 60s...")
+                log("Нет доступных активных чатов. Пауза 60с...")
                 await asyncio.sleep(60)
                 continue
 
@@ -303,28 +303,28 @@ async def broadcast_loop():
             template_2 = settings.get('message_template_2', '') or ""
 
             # Debug logs to verify config loading
-            log(f"⚙️ Config: Dual={use_dual} | Index={current_message_index}")
-            log(f"📝 Templates: T1(len)={len(template_1)} | T2(len)={len(template_2)}")
+            log(f"⚙️ Конфиг: Двойной={use_dual} | Индекс={current_message_index}")
+            log(f"📝 Шаблоны: T1(длина)={len(template_1)} | T2(длина)={len(template_2)}")
 
             if use_dual:
                 if current_message_index == 1:
                     template_to_use = template_1
-                    log("1️⃣ Cycle: Dual Mode - Sending Message #1")
+                    log("1️⃣ Цикл: двойной режим — отправка сообщения №1")
                 else:
                     template_to_use = template_2
-                    log("2️⃣ Cycle: Dual Mode - Sending Message #2")
+                    log("2️⃣ Цикл: двойной режим — отправка сообщения №2")
             else:
                 # Single mode always uses template 1
                 template_to_use = template_1
                 current_message_index = 1 
-                log("1️⃣ Cycle: Single Mode - Sending Message #1")
+                log("1️⃣ Цикл: обычный режим — отправка сообщения №1")
 
             if not template_to_use:
-                log(f"⚠️ Template #{current_message_index} is empty!")
+                log(f"⚠️ Шаблон №{current_message_index} пуст!")
                 if use_dual:
                     # Toggle index to try the other message next time
                     current_message_index = 2 if current_message_index == 1 else 1
-                    log(f"🔄 Switched to Index {current_message_index} for next attempt.")
+                    log(f"🔄 Переключено на индекс {current_message_index} для следующей попытки.")
                     await asyncio.sleep(5)
                 else:
                     await asyncio.sleep(60)
@@ -342,7 +342,7 @@ async def broadcast_loop():
                 # Check limit inside inner loop too
                 total_sent_today = int(await database.get_stat('daily_sent') or 0)
                 if total_sent_today >= settings['daily_limit']:
-                    log(f"🛑 Daily limit hit during cycle ({total_sent_today}/{settings['daily_limit']}). Pausing...")
+                    log(f"🛑 Дневной лимит достигнут в цикле ({total_sent_today}/{settings['daily_limit']}). Ставлю паузу...")
                     break
 
                 chat_id = chat_row['chat_id']
@@ -353,7 +353,7 @@ async def broadcast_loop():
                     try:
                         messages = await client.get_messages(chat_id, limit=1)
                         if messages and messages[0].sender_id == my_id:
-                            log(f"✋ Skip {chat_title}: Last message is mine")
+                            log(f"✋ Пропуск {chat_title}: последнее сообщение моё")
                             continue
                     except Exception as e:
                         # If we can't read history (e.g. private channel), just proceed safe
@@ -380,7 +380,7 @@ async def broadcast_loop():
                             else:
                                 await database.update_chat_status(chat_id, 'active', None, None)
                         except Exception as e:
-                            logger.error(f"Date parse error for {chat_id}: {e}")
+                            logger.error(f"Ошибка разбора даты для {chat_id}: {e}")
 
                 # Check Cooldown
                 cooldown_until = await database.get_chat_cooldown(chat_id)
@@ -398,10 +398,10 @@ async def broadcast_loop():
                         current_dt = datetime.now(cd_dt.tzinfo) if cd_dt.tzinfo else datetime.now()
 
                         if current_dt < cd_dt:
-                            log(f"⏳ Skipping {chat_title} (cooldown active until {cd_dt})")
+                            log(f"⏳ Пропуск {chat_title} (кулдаун активен до {cd_dt})")
                             continue
                     except Exception as e:
-                        logger.error(f"Cooldown parse error {chat_id}: {e}")
+                        logger.error(f"Ошибка разбора cooldown для {chat_id}: {e}")
 
                 text = spintax.process_spintax(template_to_use)
 
@@ -412,7 +412,7 @@ async def broadcast_loop():
                     has_media = True
 
                 try:
-                    log(f"📢 Processing: {chat_title}")
+                    log(f"📢 Обработка: {chat_title}")
 
                     # 1. Human-Like: Mark as Read
                     await client.send_read_acknowledge(chat_id)
@@ -425,7 +425,7 @@ async def broadcast_loop():
                     else:
                         await client.send_message(chat_id, text, parse_mode='html')
 
-                    log(f"✅ Sent to: {chat_title}")
+                    log(f"✅ Отправлено в: {chat_title}")
 
                     # Update Stats
                     total_sent_today += 1
@@ -443,7 +443,7 @@ async def broadcast_loop():
                         min_d = min_d if min_d and min_d > 0 else 30
                         max_d = max_d if max_d and max_d > 0 else 60
                         if min_d > max_d: min_d, max_d = max_d, min_d
-                        log(f"⏰ Custom Schedule for {chat_title}: {min_d}-{max_d}s")
+                        log(f"⏰ Кастомное расписание для {chat_title}: {min_d}-{max_d}с")
                     else:
                         min_d = settings.get('min_delay', 30)
                         max_d = settings.get('max_delay', 60)
@@ -452,11 +452,11 @@ async def broadcast_loop():
 
                     gc.collect()
 
-                    log(f"⏳ Sleeping {delay_seconds}s...")
+                    log(f"⏳ Пауза {delay_seconds}с...")
                     await asyncio.sleep(delay_seconds)
 
                 except FloodWaitError as e:
-                    log(f"🌊 FLOOD WAIT ({chat_title}): {e.seconds}s. Adding chat cooldown.")
+                    log(f"🌊 FLOOD WAIT ({chat_title}): {e.seconds}с. Добавляю кулдаун чата.")
                     # Set cooldown for this specific chat
                     cooldown_time = datetime.now().timestamp() + e.seconds + 3
                     await database.set_chat_cooldown(chat_id, cooldown_time)
@@ -471,7 +471,7 @@ async def broadcast_loop():
                     await asyncio.sleep(random.randint(2, 5)) # small sleep before next chat
 
                 except (PeerIdInvalidError, ChatWriteForbiddenError, UserBannedInChannelError) as e:
-                    log(f"❌ Banned/Invalid ({chat_title}). Deleting...")
+                    log(f"❌ Бан/невалидный чат ({chat_title}). Удаляю...")
                     try:
                         await client.delete_dialog(chat_id)
                     except:
@@ -480,7 +480,7 @@ async def broadcast_loop():
                     consecutive_errors += 1
 
                 except SlowModeWaitError as e:
-                    log(f"🐌 Slowmode ({chat_title}): Wait {e.seconds}s. Adding chat cooldown.")
+                    log(f"🐌 Slowmode ({chat_title}): ожидание {e.seconds}с. Добавляю кулдаун чата.")
                     cooldown_time = datetime.now().timestamp() + e.seconds + 3
                     await database.set_chat_cooldown(chat_id, cooldown_time)
 
@@ -490,19 +490,19 @@ async def broadcast_loop():
                     # await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error=f"Slowmode {e.seconds}s")
 
                 except ChatRestrictedError:
-                    log(f"🔇 Restricted ({chat_title}). Muting for 2h.")
+                    log(f"🔇 Ограничения ({chat_title}). Ставлю паузу на 2ч.")
                     next_run = datetime.now().timestamp() + 7200
                     next_run_dt = datetime.fromtimestamp(next_run)
-                    await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error="Restricted")
+                    await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error="Ограничение")
 
                 except Exception as e:
-                    log(f"⚠️ Error sending to {chat_title}: {e}")
+                    log(f"⚠️ Ошибка отправки в {chat_title}: {e}")
                     await database.update_chat_status(chat_id, 'active', last_error=str(e))
                     consecutive_errors += 1
                     await asyncio.sleep(5)
 
                 if consecutive_errors >= 5:
-                    log("🚨 Too many consecutive errors! Safety sleep 10 mins...")
+                    log("🚨 Слишком много ошибок подряд! Защитная пауза 10 минут...")
                     await asyncio.sleep(600)
                     consecutive_errors = 0
                     break
@@ -511,29 +511,29 @@ async def broadcast_loop():
             # Toggle message index if Dual Mode is on
             if use_dual:
                 current_message_index = 2 if current_message_index == 1 else 1
-                log(f"🔄 Cycle Finished. Toggled Index to: {current_message_index}")
+                log(f"🔄 Цикл завершён. Индекс переключен на: {current_message_index}")
 
             cycle_delay = settings.get('cycle_delay_seconds', 120)
-            log(f"🏁 End of cycle. Sleeping {cycle_delay}s...")
+            log(f"🏁 Конец цикла. Пауза {cycle_delay}с...")
             await asyncio.sleep(cycle_delay)
 
         except Exception as e:
-            logger.error(f"Critical Loop Error: {e}", exc_info=True)
+            logger.error(f"Критическая ошибка цикла: {e}", exc_info=True)
             await asyncio.sleep(60)
 
 # --- Check Auth & QR ---
 async def check_auth():
     if not await client.is_user_authorized():
         qr = await client.qr_login()
-        print("Scanned QR Login detected. Generating QR...")
+        print("Обнаружен вход по QR. Генерирую QR...")
         qr_obj = qrcode.QRCode()
         qr_obj.add_data(qr.url)
         qr_obj.print_ascii(invert=True)
-        print("Please scan the QR code using your Telegram app.")
+        print("Пожалуйста, отсканируйте QR-код в приложении Telegram.")
 
         # Wait for login
         await qr.wait()
-        print("Login successful!")
+        print("Вход выполнен успешно!")
 
 # --- Main Entry ---
 
@@ -546,7 +546,7 @@ async def main():
     # web_server.run_server() is an async func blocking? No, uvicorn.Server.serve() is blocking.
     # We should run it as a task.
     web_task = asyncio.create_task(web_server.run_server())
-    log("Web Server started on port 8080.")
+    log("Веб-сервер запущен на порту 8080.")
 
     # 3. Connect Client
     await client.connect()
@@ -557,32 +557,32 @@ async def main():
         # client.qr_login returns a QRLogin object with .url and .wait()
         try:
             qr_login = await client.qr_login()
-            print("Session missing. Generating QR Code...")
+            print("Сессия не найдена. Генерирую QR-код...")
             qr = qrcode.QRCode()
             qr.add_data(qr_login.url)
             qr.print_ascii(invert=True)
-            print("Scan above!")
+            print("Сканируйте код выше!")
             await qr_login.wait()
-            print("Logged in!")
+            print("Вход выполнен!")
         except SessionPasswordNeededError:
-            print("Two-step verification enabled. Trying password...")
+            print("Включена двухэтапная проверка. Пробую пароль...")
             if config.PASSWORD:
                 await client.sign_in(password=config.PASSWORD)
-                print("Logged in with password!")
+                print("Вход выполнен по паролю!")
             else:
-                print("ERROR: 2FA is enabled but 'PASSWORD' is missing in .env!")
+                print("ОШИБКА: включена 2FA, но 'PASSWORD' отсутствует в .env!")
                 return
         except Exception as e:
-            print(f"Login failed: {e}")
+            print(f"Ошибка входа: {e}")
             return
 
-    log("Telegram Client Connected!")
+    log("Telegram-клиент подключен!")
 
     # Fix for 'Could not find the input entity'
     # We must fetch dialogs once to populate Telethon's internal cache with access hashes
-    log("Fetching dialogs to cache entities...")
+    log("Загружаю диалоги для кэша сущностей...")
     await client.get_dialogs()
-    log("Dialogs synced!")
+    log("Диалоги синхронизированы!")
 
     # 5. Start Broadcast Loop
     broadcast_task = asyncio.create_task(broadcast_loop())
@@ -594,4 +594,4 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Stopping...")
+        print("Остановка...")

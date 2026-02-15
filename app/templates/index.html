@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en" data-bs-theme="dark">
+<html lang="ru" data-bs-theme="dark">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Telethon Bot Admin</title>
+    <title>Админ-панель Telethon бота</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         .log-box {
@@ -28,10 +28,10 @@
         </button>
         <div class="collapse navbar-collapse" id="nav">
           <ul class="navbar-nav ms-auto">
-            <li class="nav-item"><a class="nav-link {% if tab == 'dashboard' %}active{% endif %}" href="/">Dashboard</a></li>
-            <li class="nav-item"><a class="nav-link {% if tab == 'logs' %}active{% endif %}" href="/logs">Logs</a></li>
-            <li class="nav-item"><a class="nav-link {% if tab == 'chats' %}active{% endif %}" href="/chats">Chats</a></li>
-            <li class="nav-item"><a class="nav-link {% if tab == 'config' %}active{% endif %}" href="/config">Config</a></li>
+            <li class="nav-item"><a class="nav-link {% if tab == 'dashboard' %}active{% endif %}" href="/">Панель</a></li>
+            <li class="nav-item"><a class="nav-link {% if tab == 'logs' %}active{% endif %}" href="/logs">Логи</a></li>
+            <li class="nav-item"><a class="nav-link {% if tab == 'chats' %}active{% endif %}" href="/chats">Чаты</a></li>
+            <li class="nav-item"><a class="nav-link {% if tab == 'config' %}active{% endif %}" href="/config">Настройки</a></li>
           </ul>
         </div>
       </div>
@@ -45,7 +45,7 @@
         <div class="col-md-3">
             <div class="card text-center bg-dark border-secondary">
                 <div class="card-body">
-                    <h6 class="text-muted text-uppercase">Total Sent</h6>
+                    <h6 class="text-muted text-uppercase">Отправлено всего</h6>
                     <h2 class="display-6 fw-bold text-success">{{ stats.total_sent }}</h2>
                 </div>
             </div>
@@ -53,7 +53,7 @@
         <div class="col-md-3">
             <div class="card text-center bg-dark border-secondary">
                 <div class="card-body">
-                    <h6 class="text-muted text-uppercase">Today</h6>
+                    <h6 class="text-muted text-uppercase">Сегодня</h6>
                     <h2 class="display-6 fw-bold text-info">{{ stats.daily_sent }} / {{ limit }}</h2>
                 </div>
             </div>
@@ -61,7 +61,7 @@
         <div class="col-md-3">
             <div class="card text-center bg-dark border-secondary">
                 <div class="card-body">
-                    <h6 class="text-muted text-uppercase">Active Chats</h6>
+                    <h6 class="text-muted text-uppercase">Активные чаты</h6>
                     <h2 class="display-6 fw-bold text-light">{{ active_chats_count }}</h2>
                 </div>
             </div>
@@ -69,7 +69,7 @@
         <div class="col-md-3">
             <div class="card text-center bg-dark border-secondary">
                 <div class="card-body">
-                    <h6 class="text-muted text-uppercase">Errors</h6>
+                    <h6 class="text-muted text-uppercase">Ошибки</h6>
                     <h2 class="display-6 fw-bold text-danger">{{ error_chats_count }}</h2>
                 </div>
             </div>
@@ -77,47 +77,47 @@
       </div>
 
       <div class="mt-5">
-        <h4 class="mb-3">System Status</h4>
+        <h4 class="mb-3">Состояние системы</h4>
         <ul class="list-group list-group-flush bg-dark border border-secondary rounded">
-            <li class="list-group-item bg-dark text-light border-secondary">Start Date: <span class="float-end">{{ stats.start_date }}</span></li>
-            <li class="list-group-item bg-dark text-light border-secondary">Total DB Chats: <span class="float-end">{{ total_chats_count }}</span></li>
+            <li class="list-group-item bg-dark text-light border-secondary">Дата запуска: <span class="float-end">{{ stats.start_date }}</span></li>
+            <li class="list-group-item bg-dark text-light border-secondary">Всего чатов в БД: <span class="float-end">{{ total_chats_count }}</span></li>
         </ul>
       </div>
 
       <div class="mt-5">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h4>⚡ Schedule Overview</h4>
+            <h4>⚡ Обзор расписания</h4>
             <div class="badge bg-primary fs-6">
-                Global Delay: {{ global_min }}s - {{ global_max }}s
+                Глобальная задержка: {{ global_min }}с - {{ global_max }}с
             </div>
         </div>
 
         <!-- Add/Edit Custom Rule Form -->
         <div class="card bg-dark border-secondary mb-4">
             <div class="card-header border-secondary text-white">
-                ⚡ Add/Edit Custom Rule
+                ⚡ Добавить/изменить правило
             </div>
             <div class="card-body">
                 <div class="row g-3 align-items-end">
                     <div class="col-md-6">
-                        <label class="form-label">Select Chat</label>
+                        <label class="form-label">Выберите чат</label>
                         <select id="customChatSelect" class="form-select bg-black text-light border-secondary">
-                            <option value="" selected disabled>-- Select Chat --</option>
+                            <option value="" selected disabled>-- Выберите чат --</option>
                             {% for chat in all_chats %}
                             <option value="{{ chat.chat_id }}">{{ chat.chat_title }} ({{ chat.chat_id }})</option>
                             {% endfor %}
                         </select>
                     </div>
                     <div class="col-md-2">
-                         <label class="form-label">Min (s)</label>
+                         <label class="form-label">Мин (с)</label>
                          <input type="number" id="customMinDelay" class="form-control bg-black text-light border-secondary" value="30">
                     </div>
                     <div class="col-md-2">
-                         <label class="form-label">Max (s)</label>
+                         <label class="form-label">Макс (с)</label>
                          <input type="number" id="customMaxDelay" class="form-control bg-black text-light border-secondary" value="60">
                     </div>
                     <div class="col-md-2">
-                        <button onclick="saveCustomRule()" class="btn btn-primary w-100">Save Rule</button>
+                        <button onclick="saveCustomRule()" class="btn btn-primary w-100">Сохранить</button>
                     </div>
                 </div>
             </div>
@@ -126,17 +126,17 @@
         {% if custom_chats %}
         <div class="card bg-dark border-secondary">
             <div class="card-header border-secondary text-info">
-                Configuration Override: Custom Chats
+                Переопределение: кастомные чаты
             </div>
             <div class="table-responsive">
                 <table class="table table-dark table-hover mb-0">
                     <thead>
                         <tr class="text-secondary">
-                            <th>Chat Name</th>
-                            <th>Min Delay</th>
-                            <th>Max Delay</th>
-                            <th>Status</th>
-                            <th>Action</th>
+                            <th>Чат</th>
+                            <th>Мин. задержка</th>
+                            <th>Макс. задержка</th>
+                            <th>Статус</th>
+                            <th>Действие</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -147,13 +147,13 @@
                             <td class="text-info">{{ chat.custom_max_delay }}s</td>
                             <td>
                                 {% if chat.status == 'active' %}
-                                <span class="badge bg-success">Active</span>
+                                <span class="badge bg-success">Активен</span>
                                 {% else %}
                                 <span class="badge bg-secondary">{{ chat.status }}</span>
                                 {% endif %}
                             </td>
                             <td>
-                                <button onclick="removeCustomRule({{ chat.chat_id }})" class="btn btn-sm btn-outline-danger">❌ Remove</button>
+                                <button onclick="removeCustomRule({{ chat.chat_id }})" class="btn btn-sm btn-outline-danger">❌ Удалить</button>
                             </td>
                         </tr>
                         {% endfor %}
@@ -163,7 +163,7 @@
         </div>
         {% else %}
         <div class="alert alert-dark border-secondary text-muted">
-            All chats are following the global default schedule. No custom overrides active.
+            Все чаты используют глобальное расписание. Кастомных правил нет.
         </div>
         {% endif %}
       </div>
@@ -172,8 +172,8 @@
       <!-- LOGS -->
       {% if tab == 'logs' %}
       <div class="d-flex justify-content-between align-items-center mb-3">
-          <h3>📜 Live Logs</h3>
-          <a href="/logs" class="btn btn-outline-light btn-sm">Refresh</a>
+          <h3>📜 Логи в реальном времени</h3>
+          <a href="/logs" class="btn btn-outline-light btn-sm">Обновить</a>
       </div>
       <div class="log-box" id="logs">
           {% for log in logs %}
@@ -188,42 +188,42 @@
 
       <!-- CHATS -->
       {% if tab == 'chats' %}
-      <h3>💬 Chat Management</h3>
+    <h3>💬 Управление чатами</h3>
 
       <!-- Individual Chat Settings Form -->
       <div class="card bg-dark border-secondary mt-3 mb-4">
         <div class="card-header border-secondary text-white">
-            🔧 Individual Chat Settings
+            🔧 Индивидуальные настройки чата
         </div>
         <div class="card-body">
             <form action="/chats/settings" method="POST">
                 <div class="mb-3">
-                    <label class="form-label">Select Chat to Edit</label>
+                    <label class="form-label">Выберите чат для редактирования</label>
                     <select name="chat_id" class="form-select bg-black text-light border-secondary" required>
-                        <option value="" selected disabled>-- Choose a Chat --</option>
+                        <option value="" selected disabled>-- Выберите чат --</option>
                         {% for chat in chats %}
-                        <option value="{{ chat.chat_id }}">{{ chat.chat_title }} ({{ chat.chat_id }}) {% if chat.is_custom %}[Custom]{% endif %}</option>
+                        <option value="{{ chat.chat_id }}">{{ chat.chat_title }} ({{ chat.chat_id }}) {% if chat.is_custom %}[Кастом]{% endif %}</option>
                         {% endfor %}
                     </select>
                 </div>
 
                 <div class="form-check form-switch mb-3">
                     <input class="form-check-input" type="checkbox" name="is_custom" id="customSwitch" value="true">
-                    <label class="form-check-label" for="customSwitch">Enable Custom Schedule (Overrides Global Only)</label>
+                    <label class="form-check-label" for="customSwitch">Включить кастомное расписание (переопределяет глобальное только для этого чата)</label>
                 </div>
 
                 <div class="row g-3 mb-3">
                     <div class="col-md-6">
-                        <label class="form-label">Custom Min Delay (sec)</label>
+                        <label class="form-label">Мин. задержка (сек)</label>
                         <input type="number" name="custom_min_delay" class="form-control bg-black text-light border-secondary" value="30">
                     </div>
                     <div class="col-md-6">
-                        <label class="form-label">Custom Max Delay (sec)</label>
+                        <label class="form-label">Макс. задержка (сек)</label>
                         <input type="number" name="custom_max_delay" class="form-control bg-black text-light border-secondary" value="60">
                     </div>
                 </div>
 
-                <button type="submit" class="btn btn-info">Save Chat Settings</button>
+                <button type="submit" class="btn btn-info">Сохранить настройки</button>
             </form>
         </div>
       </div>
@@ -233,11 +233,11 @@
               <thead>
                   <tr class="text-secondary">
                       <th>ID</th>
-                      <th>Name</th>
-                      <th>Status</th>
-                      <th>Next Run</th>
-                      <th>Last Error</th>
-                      <th>Action</th>
+                      <th>Название</th>
+                      <th>Статус</th>
+                      <th>След. запуск</th>
+                      <th>Последняя ошибка</th>
+                      <th>Действие</th>
                   </tr>
               </thead>
               <tbody>
@@ -247,16 +247,16 @@
                       <td>
                           {{ chat.chat_title }}
                           {% if chat.is_custom %}
-                          <span class="badge bg-info text-dark ms-1">Custom</span>
+                          <span class="badge bg-info text-dark ms-1">Кастом</span>
                           {% endif %}
                       </td>
                       <td>
                         {% if chat.status == 'active' %}
-                        <span class="badge bg-success status-badge">Active</span>
+                        <span class="badge bg-success status-badge">Активен</span>
                         {% elif chat.status == 'muted' %}
-                        <span class="badge bg-warning text-dark status-badge">Muted</span>
+                        <span class="badge bg-warning text-dark status-badge">Пауза</span>
                         {% elif chat.status == 'error' %}
-                        <span class="badge bg-danger status-badge">Error</span>
+                        <span class="badge bg-danger status-badge">Ошибка</span>
                         {% else %}
                         <span class="badge bg-secondary status-badge">{{ chat.status }}</span>
                         {% endif %}
@@ -264,9 +264,9 @@
                       <td><small>{{ chat.next_run_at if chat.next_run_at else '-' }}</small></td>
                       <td class="text-danger small">{{ chat.last_error if chat.last_error }}</td>
                       <td>
-                        <form action="/chats/delete" method="POST" onsubmit="return confirm('Permanently delete {{ chat.chat_title }}?');">
+                        <form action="/chats/delete" method="POST" onsubmit="return confirm('Удалить {{ chat.chat_title }} навсегда?');">
                             <input type="hidden" name="chat_id" value="{{ chat.chat_id }}">
-                            <button class="btn btn-sm btn-outline-danger">Delete</button>
+                            <button class="btn btn-sm btn-outline-danger">Удалить</button>
                         </form>
                       </td>
                   </tr>
@@ -278,58 +278,58 @@
 
       <!-- CONFIG -->
       {% if tab == 'config' %}
-      <h3>⚙️ Configuration</h3>
+    <h3>⚙️ Конфигурация</h3>
       <div class="card bg-dark border-secondary mt-3">
           <div class="card-body">
               <form action="/config/update" method="POST">
                   <div class="mb-3">
-                      <label class="form-label">Broadcast Message Template (Spintax)</label>
+                      <label class="form-label">Шаблон рассылки (Spintax)</label>
                       <textarea name="message_template" class="form-control bg-black text-light border-secondary" rows="4">{{ config.message_template }}</textarea>
-                      <div class="form-text text-muted">Primary message. Used in Single and Dual modes.</div>
+                      <div class="form-text text-muted">Основной текст. Используется в обычном и двойном режимах.</div>
                   </div>
 
                   <div class="card bg-dark border-secondary mb-3">
                       <div class="card-body">
-                          <h6 class="card-title text-secondary">Dual Message Mode</h6>
+                          <h6 class="card-title text-secondary">Режим двух сообщений</h6>
                           <div class="form-check form-switch mb-3">
                               <input class="form-check-input" type="checkbox" name="use_dual_mode" id="dualModeSwitch" {% if config.use_dual_mode %}checked{% endif %}>
-                              <label class="form-check-label" for="dualModeSwitch">Enable Dual Mode (Send Template 1 -> Wait -> Template 2 -> Repeat)</label>
+                              <label class="form-check-label" for="dualModeSwitch">Включить двойной режим (Шаблон 1 -> Пауза -> Шаблон 2 -> Повтор)</label>
                           </div>
                           <div class="mb-3">
-                              <label class="form-label">Message Template 2 (Spintax)</label>
+                              <label class="form-label">Шаблон сообщения 2 (Spintax)</label>
                               <textarea name="message_template_2" class="form-control bg-black text-light border-secondary" rows="4">{{ config.message_template_2 }}</textarea>
-                              <div class="form-text text-muted">Secondary message. Only used if Dual Mode is enabled.</div>
+                              <div class="form-text text-muted">Второй текст. Используется только при включенном двойном режиме.</div>
                           </div>
                       </div>
                   </div>
 
                   <div class="mb-3">
-                      <label class="form-label">Daily Limit</label>
+                      <label class="form-label">Дневной лимит</label>
                       <input type="number" name="daily_limit" class="form-control bg-black text-light border-secondary" value="{{ config.daily_limit }}">
                   </div>
 
-                  <h5 class="mt-4 mb-3 text-secondary">⏰ Timeouts & Schedule</h5>
+                  <h5 class="mt-4 mb-3 text-secondary">⏰ Тайминги и расписание</h5>
 
                   <div class="mb-3">
-                      <label class="form-label">Wait Between Cycles (Seconds)</label>
+                      <label class="form-label">Пауза между циклами (секунды)</label>
                       <input type="number" name="cycle_delay_seconds" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.get('cycle_delay_seconds', 120) }}">
-                      <div class="form-text text-muted">Delay after finishing a list of chats (before starting next cycle or next message type). Default: 120s (2 mins).</div>
+                      <div class="form-text text-muted">Задержка после полного прохода по чатам (до следующего цикла или типа сообщения). По умолчанию: 120с (2 мин).</div>
                   </div>
 
                   <div class="row g-3 mb-3">
                       <div class="col-md-6">
-                          <label class="form-label">Min Delay (Seconds)</label>
+                          <label class="form-label">Мин. задержка (секунды)</label>
                           <input type="number" name="min_delay" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.min_delay }}">
-                          <div class="form-text text-muted">Random sleep time AFTER sending a message.</div>
+                          <div class="form-text text-muted">Случайная пауза ПОСЛЕ отправки сообщения.</div>
                       </div>
                       <div class="col-md-6">
-                          <label class="form-label">Max Delay (Seconds)</label>
+                          <label class="form-label">Макс. задержка (секунды)</label>
                           <input type="number" name="max_delay" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.max_delay }}">
-                          <div class="form-text text-muted">Random sleep time AFTER sending a message.</div>
+                          <div class="form-text text-muted">Случайная пауза ПОСЛЕ отправки сообщения.</div>
                       </div>
                   </div>
 
-                  <button class="btn btn-primary">Save Changes</button>
+                  <button class="btn btn-primary">Сохранить изменения</button>
               </form>
           </div>
       </div>
@@ -344,7 +344,7 @@
             const maxDelay = document.getElementById('customMaxDelay').value;
 
             if (!chatId) {
-                alert("Please select a chat!");
+                alert("Пожалуйста, выберите чат!");
                 return;
             }
 
@@ -363,12 +363,12 @@
             if (response.ok) {
                 window.location.reload();
             } else {
-                alert("Failed to save rule.");
+                alert("Не удалось сохранить правило.");
             }
         }
 
         async function removeCustomRule(chatId) {
-            if (!confirm("Remove custom schedule for this chat?")) return;
+            if (!confirm("Удалить кастомное расписание для этого чата?")) return;
 
             const response = await fetch('/api/settings/remove_custom_chat', {
                 method: 'POST',
@@ -383,7 +383,7 @@
             if (response.ok) {
                 window.location.reload();
             } else {
-                alert("Failed to remove rule.");
+                alert("Не удалось удалить правило.");
             }
         }
     </script>
