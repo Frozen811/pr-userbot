@@ -22,7 +22,7 @@
   <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary mb-4">
       <div class="container">
-        <a class="navbar-brand text-primary fw-bold" href="/">🤖 PR-UserBot</a>
+        <a class="navbar-brand text-primary fw-bold" href="/">Бот бля рассыл</a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
           <span class="navbar-toggler-icon"></span>
         </button>
@@ -281,56 +281,71 @@
     <h3>⚙️ Конфигурация</h3>
       <div class="card bg-dark border-secondary mt-3">
           <div class="card-body">
-              <form action="/config/update" method="POST">
-                  <div class="mb-3">
-                      <label class="form-label">Шаблон рассылки (Spintax)</label>
-                      <textarea name="message_template" class="form-control bg-black text-light border-secondary" rows="4">{{ config.message_template }}</textarea>
-                      <div class="form-text text-muted">Основной текст. Используется в обычном и двойном режимах.</div>
+
+              <!-- Broadcast Mode Selector -->
+              <div class="mb-4">
+                  <label class="form-label fw-semibold">🔄 Режим рассылки (Broadcast Mode)</label>
+                  <select id="broadcastMode" class="form-select bg-black text-light border-secondary">
+                      <option value="1" {% if not config.broadcast_mode or config.broadcast_mode == 1 %}selected{% endif %}>1 — Одиночный текст (Single)</option>
+                      <option value="2" {% if config.broadcast_mode == 2 %}selected{% endif %}>2 — Чередование 2 текстов (Dual: 1 → 2)</option>
+                      <option value="3" {% if config.broadcast_mode == 3 %}selected{% endif %}>3 — Чередование 3 текстов (Triple: 1 → 2 → 3)</option>
+                  </select>
+                  <div class="form-text text-muted">Выберите, сколько шаблонов чередовать. Команды: <code>.mode 1</code> / <code>.mode 2</code> / <code>.mode 3</code></div>
+              </div>
+
+              <!-- Template 1 -->
+              <div class="mb-3">
+                  <label class="form-label fw-semibold text-info">📝 Шаблон рассылки 1 (Spintax)</label>
+                  <textarea id="messageTemplate1" class="form-control bg-black text-light border-secondary" rows="4">{{ config.message_template }}</textarea>
+                  <div class="form-text text-muted">Основной текст. Используется во всех режимах. Ком.: <code>.set &lt;text&gt;</code></div>
+              </div>
+
+              <!-- Template 2 -->
+              <div class="card bg-dark border-info border-opacity-25 mb-3">
+                  <div class="card-body">
+                      <h6 class="card-title text-info">📝 Шаблон сообщения 2 (Spintax)</h6>
+                      <textarea id="messageTemplate2" class="form-control bg-black text-light border-secondary" rows="4">{{ config.message_template_2 }}</textarea>
+                      <div class="form-text text-muted">Второй текст. Используется в режимах 2 и 3. Ком.: <code>.set2 &lt;text&gt;</code></div>
                   </div>
+              </div>
 
-                  <div class="card bg-dark border-secondary mb-3">
-                      <div class="card-body">
-                          <h6 class="card-title text-secondary">Режим двух сообщений</h6>
-                          <div class="form-check form-switch mb-3">
-                              <input class="form-check-input" type="checkbox" name="use_dual_mode" id="dualModeSwitch" {% if config.use_dual_mode %}checked{% endif %}>
-                              <label class="form-check-label" for="dualModeSwitch">Включить двойной режим (Шаблон 1 -> Пауза -> Шаблон 2 -> Повтор)</label>
-                          </div>
-                          <div class="mb-3">
-                              <label class="form-label">Шаблон сообщения 2 (Spintax)</label>
-                              <textarea name="message_template_2" class="form-control bg-black text-light border-secondary" rows="4">{{ config.message_template_2 }}</textarea>
-                              <div class="form-text text-muted">Второй текст. Используется только при включенном двойном режиме.</div>
-                          </div>
-                      </div>
+              <!-- Template 3 -->
+              <div class="card bg-dark border-warning border-opacity-25 mb-4">
+                  <div class="card-body">
+                      <h6 class="card-title text-warning">📝 Шаблон сообщения 3 (Spintax)</h6>
+                      <textarea id="messageTemplate3" class="form-control bg-black text-light border-secondary" rows="4">{{ config.message_template_3 }}</textarea>
+                      <div class="form-text text-muted">Третий текст. Используется только в режиме 3 (Triple). Ком.: <code>.set3 &lt;text&gt;</code></div>
                   </div>
+              </div>
 
-                  <div class="mb-3">
-                      <label class="form-label">Дневной лимит</label>
-                      <input type="number" name="daily_limit" class="form-control bg-black text-light border-secondary" value="{{ config.daily_limit }}">
+              <div class="mb-3">
+                  <label class="form-label">Дневной лимит</label>
+                  <input type="number" id="dailyLimit" class="form-control bg-black text-light border-secondary" value="{{ config.daily_limit }}">
+              </div>
+
+              <h5 class="mt-4 mb-3 text-secondary">⏰ Тайминги и расписание</h5>
+
+              <div class="mb-3">
+                  <label class="form-label">Пауза между циклами (секунды)</label>
+                  <input type="number" id="cycleDelay" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.get('cycle_delay_seconds', 120) }}">
+                  <div class="form-text text-muted">Задержка после полного прохода по чатам (до следующего шаблона). По умолчанию: 120с (2 мин).</div>
+              </div>
+
+              <div class="row g-3 mb-4">
+                  <div class="col-md-6">
+                      <label class="form-label">Мин. задержка (секунды)</label>
+                      <input type="number" id="minDelay" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.min_delay }}">
+                      <div class="form-text text-muted">Случайная пауза ПОСЛЕ отправки сообщения.</div>
                   </div>
-
-                  <h5 class="mt-4 mb-3 text-secondary">⏰ Тайминги и расписание</h5>
-
-                  <div class="mb-3">
-                      <label class="form-label">Пауза между циклами (секунды)</label>
-                      <input type="number" name="cycle_delay_seconds" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.get('cycle_delay_seconds', 120) }}">
-                      <div class="form-text text-muted">Задержка после полного прохода по чатам (до следующего цикла или типа сообщения). По умолчанию: 120с (2 мин).</div>
+                  <div class="col-md-6">
+                      <label class="form-label">Макс. задержка (секунды)</label>
+                      <input type="number" id="maxDelay" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.max_delay }}">
+                      <div class="form-text text-muted">Случайная пауза ПОСЛЕ отправки сообщения.</div>
                   </div>
+              </div>
 
-                  <div class="row g-3 mb-3">
-                      <div class="col-md-6">
-                          <label class="form-label">Мин. задержка (секунды)</label>
-                          <input type="number" name="min_delay" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.min_delay }}">
-                          <div class="form-text text-muted">Случайная пауза ПОСЛЕ отправки сообщения.</div>
-                      </div>
-                      <div class="col-md-6">
-                          <label class="form-label">Макс. задержка (секунды)</label>
-                          <input type="number" name="max_delay" min="0" class="form-control bg-black text-light border-secondary" value="{{ config.max_delay }}">
-                          <div class="form-text text-muted">Случайная пауза ПОСЛЕ отправки сообщения.</div>
-                      </div>
-                  </div>
-
-                  <button class="btn btn-primary">Сохранить изменения</button>
-              </form>
+              <button class="btn btn-primary" onclick="saveConfig()">💾 Сохранить изменения</button>
+              <span id="saveConfigStatus" class="ms-3 small"></span>
           </div>
       </div>
       {% endif %}
@@ -338,6 +353,42 @@
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        async function saveConfig() {
+            const statusEl = document.getElementById('saveConfigStatus');
+            statusEl.textContent = 'Сохранение...';
+            statusEl.className = 'ms-3 small text-muted';
+
+            const payload = {
+                message_template:   document.getElementById('messageTemplate1').value,
+                message_template_2: document.getElementById('messageTemplate2').value,
+                message_template_3: document.getElementById('messageTemplate3').value,
+                broadcast_mode:     parseInt(document.getElementById('broadcastMode').value),
+                daily_limit:        parseInt(document.getElementById('dailyLimit').value),
+                min_delay:          parseInt(document.getElementById('minDelay').value),
+                max_delay:          parseInt(document.getElementById('maxDelay').value),
+                cycle_delay_seconds: parseInt(document.getElementById('cycleDelay').value)
+            };
+
+            try {
+                const response = await fetch('/api/settings/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (response.ok) {
+                    statusEl.textContent = '✅ Сохранено!';
+                    statusEl.className = 'ms-3 small text-success';
+                } else {
+                    statusEl.textContent = '❌ Ошибка сохранения.';
+                    statusEl.className = 'ms-3 small text-danger';
+                }
+            } catch (e) {
+                statusEl.textContent = '❌ Ошибка сети.';
+                statusEl.className = 'ms-3 small text-danger';
+            }
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+        }
+
         async function saveCustomRule() {
             const chatId = document.getElementById('customChatSelect').value;
             const minDelay = document.getElementById('customMinDelay').value;

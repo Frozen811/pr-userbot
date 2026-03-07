@@ -112,7 +112,8 @@ async def cmd_set(event):
     await database.update_settings(
         template=text,
         template_2=s.get('message_template_2', ''),
-        dual_mode=s.get('use_dual_mode', False),
+        template_3=s.get('message_template_3', ''),
+        broadcast_mode=s.get('broadcast_mode', 1),
         limit=s['daily_limit'],
         min_delay=s.get('min_delay', 30),
         max_delay=s.get('max_delay', 60),
@@ -137,7 +138,8 @@ async def cmd_set2(event):
     await database.update_settings(
         template=s.get('message_template', ''),
         template_2=text,
-        dual_mode=s.get('use_dual_mode', False),
+        template_3=s.get('message_template_3', ''),
+        broadcast_mode=s.get('broadcast_mode', 1),
         limit=s['daily_limit'],
         min_delay=s.get('min_delay', 30),
         max_delay=s.get('max_delay', 60),
@@ -146,16 +148,42 @@ async def cmd_set2(event):
     await event.edit("📝 **Шаблон 2 сохранён!**")
     log("Шаблон 2 обновлён через команду.")
 
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.set3 (.+)'))
+async def cmd_set3(event):
+    if event.message.entities:
+        full_html = html.unparse(event.message.message, event.message.entities)
+        parts = full_html.split(maxsplit=1)
+        text = parts[1] if len(parts) > 1 else event.pattern_match.group(1)
+    else:
+        text = event.pattern_match.group(1)
+
+    s = await database.get_settings()
+
+    await database.update_settings(
+        template=s.get('message_template', ''),
+        template_2=s.get('message_template_2', ''),
+        template_3=text,
+        broadcast_mode=s.get('broadcast_mode', 1),
+        limit=s['daily_limit'],
+        min_delay=s.get('min_delay', 30),
+        max_delay=s.get('max_delay', 60),
+        cycle_delay=s.get('cycle_delay_seconds', 120)
+    )
+    await event.edit("📝 **Шаблон 3 сохранён!**")
+    log("Шаблон 3 обновлён через команду.")
+
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.dual (on|off)'))
 async def cmd_dual(event):
     state = event.pattern_match.group(1).lower()
     enable = (state == 'on')
 
     s = await database.get_settings()
+    new_mode = 2 if enable else 1
     await database.update_settings(
         template=s.get('message_template', ''),
         template_2=s.get('message_template_2', ''),
-        dual_mode=enable,
+        template_3=s.get('message_template_3', ''),
+        broadcast_mode=new_mode,
         limit=s['daily_limit'],
         min_delay=s.get('min_delay', 30),
         max_delay=s.get('max_delay', 60),
@@ -164,6 +192,25 @@ async def cmd_dual(event):
     status_text = "включён" if enable else "выключен"
     await event.edit(f"🔄 **Двойной режим {status_text}!**")
     log(f"Двойной режим {status_text} через команду.")
+
+@client.on(events.NewMessage(outgoing=True, pattern=r'\.mode ([123])'))
+async def cmd_mode(event):
+    mode = int(event.pattern_match.group(1))
+    s = await database.get_settings()
+    await database.update_settings(
+        template=s.get('message_template', ''),
+        template_2=s.get('message_template_2', ''),
+        template_3=s.get('message_template_3', ''),
+        broadcast_mode=mode,
+        limit=s['daily_limit'],
+        min_delay=s.get('min_delay', 30),
+        max_delay=s.get('max_delay', 60),
+        cycle_delay=s.get('cycle_delay_seconds', 120)
+    )
+    mode_names = {1: "Одиночный", 2: "Двойной", 3: "Тройной"}
+    web_server.bot_state["cycle_index"] = 0  # Reset cycle on mode change
+    await event.edit(f"🔄 **Режим переключен: {mode_names.get(mode, mode)}!**")
+    log(f"Режим рассылки изменён на {mode} через команду.")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r'\.list'))
 async def cmd_list(event):
@@ -244,8 +291,8 @@ async def broadcast_loop():
     if not my_id:
         log("⚠️ Цикл рассылки запущен без 'my_id' (анти-дубль недоступен).")
 
-    # Track which message we are sending next. 1 or 2.
-    current_message_index = 1
+    # cycle_index is stored in web_server.bot_state so it persists across loop iterations
+    # and is accessible/resettable via Telegram commands
 
     while True:
         try:
@@ -298,33 +345,34 @@ async def broadcast_loop():
             random.shuffle(active_chats)
 
             # Determine text for this cycle
-            use_dual = bool(settings.get('use_dual_mode', False))
+            broadcast_mode = int(settings.get('broadcast_mode', 1))
             template_1 = settings.get('message_template', '') or ""
             template_2 = settings.get('message_template_2', '') or ""
+            template_3 = settings.get('message_template_3', '') or ""
 
-            # Debug logs to verify config loading
-            log(f"⚙️ Конфиг: Двойной={use_dual} | Индекс={current_message_index}")
-            log(f"📝 Шаблоны: T1(длина)={len(template_1)} | T2(длина)={len(template_2)}")
+            cycle_index = web_server.bot_state["cycle_index"]
+            mode_names = {1: "Single", 2: "Dual", 3: "Triple"}
+            log(f"⚙️ Конфиг: Режим={mode_names.get(broadcast_mode, broadcast_mode)} | cycle_index={cycle_index}")
+            log(f"📝 Шаблоны: T1={len(template_1)}ч | T2={len(template_2)}ч | T3={len(template_3)}ч")
 
-            if use_dual:
-                if current_message_index == 1:
-                    template_to_use = template_1
-                    log("1️⃣ Цикл: двойной режим — отправка сообщения №1")
-                else:
-                    template_to_use = template_2
-                    log("2️⃣ Цикл: двойной режим — отправка сообщения №2")
+            if broadcast_mode == 3:
+                slot = cycle_index % 3
+                slots = [template_1, template_2, template_3]
+                template_to_use = slots[slot]
+                log(f"{slot + 1}️⃣ Triple режим — отправка шаблона №{slot + 1}")
+            elif broadcast_mode == 2:
+                slot = cycle_index % 2
+                template_to_use = template_1 if slot == 0 else template_2
+                log(f"{slot + 1}️⃣ Dual режим — отправка шаблона №{slot + 1}")
             else:
-                # Single mode always uses template 1
                 template_to_use = template_1
-                current_message_index = 1 
-                log("1️⃣ Цикл: обычный режим — отправка сообщения №1")
+                log("1️⃣ Single режим — отправка шаблона №1")
 
             if not template_to_use:
-                log(f"⚠️ Шаблон №{current_message_index} пуст!")
-                if use_dual:
-                    # Toggle index to try the other message next time
-                    current_message_index = 2 if current_message_index == 1 else 1
-                    log(f"🔄 Переключено на индекс {current_message_index} для следующей попытки.")
+                log(f"⚠️ Активный шаблон пуст (cycle_index={cycle_index})!")
+                if broadcast_mode >= 2:
+                    web_server.bot_state["cycle_index"] += 1
+                    log(f"🔄 Переключено на следующий шаблон (index={web_server.bot_state['cycle_index']}).")
                     await asyncio.sleep(5)
                 else:
                     await asyncio.sleep(60)
@@ -507,11 +555,10 @@ async def broadcast_loop():
                     consecutive_errors = 0
                     break
 
-            # End of list cycle
-            # Toggle message index if Dual Mode is on
-            if use_dual:
-                current_message_index = 2 if current_message_index == 1 else 1
-                log(f"🔄 Цикл завершён. Индекс переключен на: {current_message_index}")
+            # End of list cycle — advance cycle_index for multi-template modes
+            if broadcast_mode >= 2:
+                web_server.bot_state["cycle_index"] += 1
+                log(f"🔄 Цикл завершён. cycle_index={web_server.bot_state['cycle_index']}")
 
             cycle_delay = settings.get('cycle_delay_seconds', 120)
             log(f"🏁 Конец цикла. Пауза {cycle_delay}с...")

@@ -18,6 +18,9 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # Shared log buffer
 log_buffer = deque(maxlen=50)
 
+# Shared bot state (cycle index survives web restarts, resets on process restart)
+bot_state = {"cycle_index": 0}
+
 def add_log(message: str):
     log_buffer.append(message)
 
@@ -29,6 +32,16 @@ class CustomChatRequest(BaseModel):
 
 class RemoveCustomChatRequest(BaseModel):
     chat_id: int
+
+class ConfigRequest(BaseModel):
+    message_template: str = ""
+    message_template_2: str = ""
+    message_template_3: str = ""
+    broadcast_mode: int = 1
+    daily_limit: int = 400
+    min_delay: int = 30
+    max_delay: int = 60
+    cycle_delay_seconds: int = 120
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -65,6 +78,20 @@ async def dashboard(request: Request):
 @app.post("/api/settings/custom_chat")
 async def api_set_custom_chat(data: CustomChatRequest):
     await database.update_chat_settings(data.chat_id, True, data.min_delay, data.max_delay)
+    return {"status": "success"}
+
+@app.post("/api/settings/config")
+async def api_save_config(data: ConfigRequest):
+    await database.update_settings(
+        template=data.message_template,
+        template_2=data.message_template_2,
+        template_3=data.message_template_3,
+        broadcast_mode=max(1, min(3, data.broadcast_mode)),
+        limit=data.daily_limit,
+        min_delay=data.min_delay,
+        max_delay=data.max_delay,
+        cycle_delay=data.cycle_delay_seconds
+    )
     return {"status": "success"}
 
 @app.post("/api/settings/remove_custom_chat")
@@ -107,7 +134,8 @@ async def config_page(request: Request):
 async def update_config(
     message_template: str = Form(""),
     message_template_2: str = Form(""),
-    use_dual_mode: bool = Form(False),
+    message_template_3: str = Form(""),
+    broadcast_mode: int = Form(1),
     daily_limit: int = Form(400),
     min_delay: int = Form(30),
     max_delay: int = Form(60),
@@ -116,7 +144,8 @@ async def update_config(
     await database.update_settings(
         template=message_template,
         template_2=message_template_2,
-        dual_mode=use_dual_mode,
+        template_3=message_template_3,
+        broadcast_mode=max(1, min(3, broadcast_mode)),
         limit=daily_limit,
         min_delay=min_delay,
         max_delay=max_delay,
