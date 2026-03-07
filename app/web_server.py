@@ -1,14 +1,32 @@
-from fastapi import FastAPI, Request, Form, Body
+from fastapi import FastAPI, Request, Form, Body, Depends, HTTPException, status
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import uvicorn
 import asyncio
+import secrets
 from app import database
 import os
 from collections import deque
 from pydantic import BaseModel
 
 app = FastAPI()
+
+# HTTP Basic Auth
+security = HTTPBasic()
+ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
+
+def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
+    user_ok = secrets.compare_digest(credentials.username.encode(), ADMIN_USER.encode())
+    pass_ok = secrets.compare_digest(credentials.password.encode(), ADMIN_PASS.encode())
+    if not (user_ok and pass_ok):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
 
 # Setup templates
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), 'templates')
@@ -43,7 +61,7 @@ class ConfigRequest(BaseModel):
     max_delay: int = 60
     cycle_delay_seconds: int = 120
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
 async def dashboard(request: Request):
     stats = {}
     stats['total_sent'] = await database.get_stat('total_sent')
@@ -75,12 +93,12 @@ async def dashboard(request: Request):
         "global_max": global_max
     })
 
-@app.post("/api/settings/custom_chat")
+@app.post("/api/settings/custom_chat", dependencies=[Depends(verify_credentials)])
 async def api_set_custom_chat(data: CustomChatRequest):
     await database.update_chat_settings(data.chat_id, True, data.min_delay, data.max_delay)
     return {"status": "success"}
 
-@app.post("/api/settings/config")
+@app.post("/api/settings/config", dependencies=[Depends(verify_credentials)])
 async def api_save_config(data: ConfigRequest):
     await database.update_settings(
         template=data.message_template,
@@ -94,12 +112,12 @@ async def api_save_config(data: ConfigRequest):
     )
     return {"status": "success"}
 
-@app.post("/api/settings/remove_custom_chat")
+@app.post("/api/settings/remove_custom_chat", dependencies=[Depends(verify_credentials)])
 async def api_remove_custom_chat(data: RemoveCustomChatRequest):
     await database.update_chat_settings(data.chat_id, False, 0, 0)
     return {"status": "success"}
 
-@app.get("/logs", response_class=HTMLResponse)
+@app.get("/logs", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
 async def logs(request: Request):
     return templates.TemplateResponse("index.html", {
         "request": request,
@@ -107,7 +125,7 @@ async def logs(request: Request):
         "logs": list(log_buffer)
     })
 
-@app.get("/chats", response_class=HTMLResponse)
+@app.get("/chats", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
 async def chats(request: Request):
     chat_list = await database.get_chats()
     return templates.TemplateResponse("index.html", {
@@ -116,12 +134,12 @@ async def chats(request: Request):
         "chats": chat_list
     })
 
-@app.post("/chats/delete")
+@app.post("/chats/delete", dependencies=[Depends(verify_credentials)])
 async def delete_chat(chat_id: int = Form(...)):
     await database.remove_chat(chat_id)
     return RedirectResponse(url="/chats", status_code=303)
 
-@app.get("/config", response_class=HTMLResponse)
+@app.get("/config", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
 async def config_page(request: Request):
     conf = await database.get_settings()
     return templates.TemplateResponse("index.html", {
@@ -130,7 +148,7 @@ async def config_page(request: Request):
         "config": conf
     })
 
-@app.post("/config/update")
+@app.post("/config/update", dependencies=[Depends(verify_credentials)])
 async def update_config(
     message_template: str = Form(""),
     message_template_2: str = Form(""),
