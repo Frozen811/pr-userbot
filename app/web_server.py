@@ -5,7 +5,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import uvicorn
 import asyncio
 import secrets
-from app import database
+from app import database, spintax
 import os
 from collections import deque
 from pydantic import BaseModel
@@ -191,6 +191,14 @@ async def update_config(
         cycle_delay=cycle_delay_seconds
     )
     return RedirectResponse(url="/config", status_code=303)
+
+class SpintaxPreviewRequest(BaseModel):
+    text: str
+
+@app.post("/api/utils/preview_spintax", dependencies=[Depends(verify_credentials)])
+async def api_preview_spintax(data: SpintaxPreviewRequest):
+    result = spintax.process_spintax(data.text)
+    return {"result": result}
 
 async def run_server():
     config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="info")
