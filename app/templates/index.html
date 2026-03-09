@@ -464,7 +464,7 @@
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    resultEl.textContent = '🔍 ' + data.result;
+                    resultEl.innerHTML = '🔍 ' + data.result;
                     resultEl.style.display = '';
                 } else {
                     showToast('Ошибка предпросмотра', 'danger');

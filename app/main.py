@@ -470,9 +470,9 @@ async def broadcast_loop():
                         await asyncio.sleep(random.randint(2, 5))
 
                     if has_media:
-                        await client.send_message(chat_id, text, file=media_path, parse_mode='html')
+                        await client.send_message(chat_id, text, file=media_path, parse_mode='html', link_preview=True)
                     else:
-                        await client.send_message(chat_id, text, parse_mode='html')
+                        await client.send_message(chat_id, text, parse_mode='html', link_preview=True)
 
                     log(f"✅ Отправлено в: {chat_title}")
 
