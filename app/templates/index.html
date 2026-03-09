@@ -95,14 +95,6 @@
       </div>
 
       <div class="mt-5">
-        <h4 class="mb-3">Состояние системы</h4>
-        <ul class="list-group list-group-flush bg-dark border border-secondary rounded">
-            <li class="list-group-item bg-dark text-light border-secondary">Дата запуска: <span class="float-end">{{ stats.start_date }}</span></li>
-            <li class="list-group-item bg-dark text-light border-secondary">Всего чатов в БД: <span class="float-end">{{ total_chats_count }}</span></li>
-        </ul>
-      </div>
-
-      <div class="mt-5">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h4>⚡ Обзор расписания</h4>
             <div class="badge bg-primary fs-6">
@@ -245,8 +237,6 @@
                       <th>ID</th>
                       <th>Название</th>
                       <th>Статус</th>
-                      <th>След. запуск</th>
-                      <th>Последняя ошибка</th>
                       <th>Действие</th>
                   </tr>
               </thead>
@@ -271,8 +261,6 @@
                         <span class="badge bg-secondary status-badge">{{ chat.status }}</span>
                         {% endif %}
                       </td>
-                      <td><small>{{ chat.next_run_at if chat.next_run_at else '-' }}</small></td>
-                      <td class="text-danger small">{{ chat.last_error if chat.last_error }}</td>
                       <td>
                         <button class="btn btn-sm btn-outline-danger"
                           data-chat-id="{{ chat.chat_id }}"
