@@ -78,6 +78,7 @@ async def dashboard(request: Request):
     settings = await database.get_settings()
     global_min = settings.get('min_delay', 30)
     global_max = settings.get('max_delay', 60)
+    is_running = bool(settings.get('is_running', 0))
 
     return templates.TemplateResponse("index.html", {
         "request": request,
@@ -88,10 +89,22 @@ async def dashboard(request: Request):
         "total_chats_count": len(chats),
         "limit": settings.get('daily_limit', 400),
         "custom_chats": custom_chats,
-        "all_chats": chats, # Pass all chats for the dropdown
+        "all_chats": chats,
         "global_min": global_min,
-        "global_max": global_max
+        "global_max": global_max,
+        "is_running": is_running,
     })
+
+@app.post("/api/bot/toggle", dependencies=[Depends(verify_credentials)])
+async def api_bot_toggle():
+    settings = await database.get_settings()
+    new_state = not bool(settings.get('is_running', 0))
+    await database.set_running_status(new_state)
+    return {"is_running": new_state}
+
+@app.get("/api/logs", dependencies=[Depends(verify_credentials)])
+async def api_get_logs():
+    return JSONResponse(content={"logs": list(log_buffer)})
 
 @app.post("/api/settings/custom_chat", dependencies=[Depends(verify_credentials)])
 async def api_set_custom_chat(data: CustomChatRequest):
@@ -100,6 +113,10 @@ async def api_set_custom_chat(data: CustomChatRequest):
 
 @app.post("/api/settings/config", dependencies=[Depends(verify_credentials)])
 async def api_save_config(data: ConfigRequest):
+    if data.daily_limit < 0 or data.min_delay < 0 or data.max_delay < 0 or data.cycle_delay_seconds < 0:
+        raise HTTPException(status_code=400, detail="Values cannot be negative.")
+    if data.min_delay > data.max_delay:
+        raise HTTPException(status_code=400, detail="min_delay cannot be greater than max_delay.")
     await database.update_settings(
         template=data.message_template,
         template_2=data.message_template_2,
@@ -159,6 +176,10 @@ async def update_config(
     max_delay: int = Form(60),
     cycle_delay_seconds: int = Form(120)
 ):
+    if daily_limit < 0 or min_delay < 0 or max_delay < 0 or cycle_delay_seconds < 0:
+        raise HTTPException(status_code=400, detail="Values cannot be negative.")
+    if min_delay > max_delay:
+        raise HTTPException(status_code=400, detail="min_delay cannot be greater than max_delay.")
     await database.update_settings(
         template=message_template,
         template_2=message_template_2,

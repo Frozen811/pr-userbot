@@ -298,6 +298,7 @@ async def broadcast_loop():
         try:
             settings = await database.get_settings()
             if not settings['is_running']:
+                log("⏸ Бот на паузе...")
                 await asyncio.sleep(5)
                 continue
 

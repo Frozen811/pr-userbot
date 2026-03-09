@@ -41,6 +41,24 @@
 
       <!-- DASHBOARD -->
       {% if tab == 'dashboard' %}
+
+      <!-- Bot Status Control -->
+      <div class="card bg-dark border-secondary mb-4">
+        <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-3">
+          <div class="d-flex align-items-center gap-3">
+            <h5 class="mb-0">Статус бота</h5>
+            <span id="botStatusBadge" class="badge fs-6 {% if is_running %}bg-success{% else %}bg-danger{% endif %}">
+              {% if is_running %}🟢 Запущен{% else %}🔴 Остановлен{% endif %}
+            </span>
+          </div>
+          <button id="botToggleBtn"
+            class="btn {% if is_running %}btn-outline-danger{% else %}btn-outline-success{% endif %} fw-semibold"
+            onclick="toggleBot()">
+            {% if is_running %}⏹ Остановить{% else %}▶ Запустить{% endif %}
+          </button>
+        </div>
+      </div>
+
       <div class="row g-4">
         <div class="col-md-3">
             <div class="card text-center bg-dark border-secondary">
@@ -173,60 +191,46 @@
       {% if tab == 'logs' %}
       <div class="d-flex justify-content-between align-items-center mb-3">
           <h3>📜 Логи в реальном времени</h3>
-          <a href="/logs" class="btn btn-outline-light btn-sm">Обновить</a>
+          <span class="badge bg-secondary" id="logRefreshBadge">Авто-обновление каждые 3с</span>
       </div>
-      <div class="log-box" id="logs">
-          {% for log in logs %}
-          <div>{{ log }}</div>
-          {% endfor %}
-      </div>
+      <div class="log-box" id="logs"></div>
       <script>
-        var objDiv = document.getElementById("logs");
-        objDiv.scrollTop = objDiv.scrollHeight;
+        function getLogClass(text) {
+            if (/✅|Success/i.test(text)) return 'text-success';
+            if (/❌|🚫|Error|CRITICAL/i.test(text)) return 'text-danger';
+            if (/⚠️|Slowmode/i.test(text)) return 'text-warning';
+            return 'text-info';
+        }
+
+        function renderLogs(logs) {
+            const box = document.getElementById('logs');
+            const wasAtBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 40;
+            box.innerHTML = logs.map(entry =>
+                `<div class="${getLogClass(entry)}">${entry.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`
+            ).join('');
+            if (wasAtBottom) box.scrollTop = box.scrollHeight;
+        }
+
+        async function fetchLogs() {
+            try {
+                const res = await fetch('/api/logs');
+                if (res.ok) {
+                    const data = await res.json();
+                    renderLogs(data.logs || []);
+                }
+            } catch (e) {
+                // Network error — keep existing display
+            }
+        }
+
+        fetchLogs();
+        setInterval(fetchLogs, 3000);
       </script>
       {% endif %}
 
       <!-- CHATS -->
       {% if tab == 'chats' %}
     <h3>💬 Управление чатами</h3>
-
-      <!-- Individual Chat Settings Form -->
-      <div class="card bg-dark border-secondary mt-3 mb-4">
-        <div class="card-header border-secondary text-white">
-            🔧 Индивидуальные настройки чата
-        </div>
-        <div class="card-body">
-            <form action="/chats/settings" method="POST">
-                <div class="mb-3">
-                    <label class="form-label">Выберите чат для редактирования</label>
-                    <select name="chat_id" class="form-select bg-black text-light border-secondary" required>
-                        <option value="" selected disabled>-- Выберите чат --</option>
-                        {% for chat in chats %}
-                        <option value="{{ chat.chat_id }}">{{ chat.chat_title }} ({{ chat.chat_id }}) {% if chat.is_custom %}[Кастом]{% endif %}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="form-check form-switch mb-3">
-                    <input class="form-check-input" type="checkbox" name="is_custom" id="customSwitch" value="true">
-                    <label class="form-check-label" for="customSwitch">Включить кастомное расписание (переопределяет глобальное только для этого чата)</label>
-                </div>
-
-                <div class="row g-3 mb-3">
-                    <div class="col-md-6">
-                        <label class="form-label">Мин. задержка (сек)</label>
-                        <input type="number" name="custom_min_delay" class="form-control bg-black text-light border-secondary" value="30">
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label">Макс. задержка (сек)</label>
-                        <input type="number" name="custom_max_delay" class="form-control bg-black text-light border-secondary" value="60">
-                    </div>
-                </div>
-
-                <button type="submit" class="btn btn-info">Сохранить настройки</button>
-            </form>
-        </div>
-      </div>
 
       <div class="table-responsive mt-3">
           <table class="table table-dark table-hover align-middle">
@@ -301,7 +305,7 @@
               </div>
 
               <!-- Template 2 -->
-              <div class="card bg-dark border-info border-opacity-25 mb-3">
+              <div id="template2Card" class="card bg-dark border-info border-opacity-25 mb-3">
                   <div class="card-body">
                       <h6 class="card-title text-info">📝 Шаблон сообщения 2 (Spintax)</h6>
                       <textarea id="messageTemplate2" class="form-control bg-black text-light border-secondary" rows="4">{{ config.message_template_2 }}</textarea>
@@ -310,7 +314,7 @@
               </div>
 
               <!-- Template 3 -->
-              <div class="card bg-dark border-warning border-opacity-25 mb-4">
+              <div id="template3Card" class="card bg-dark border-warning border-opacity-25 mb-4">
                   <div class="card-body">
                       <h6 class="card-title text-warning">📝 Шаблон сообщения 3 (Spintax)</h6>
                       <textarea id="messageTemplate3" class="form-control bg-black text-light border-secondary" rows="4">{{ config.message_template_3 }}</textarea>
@@ -379,7 +383,8 @@
                     statusEl.textContent = '✅ Сохранено!';
                     statusEl.className = 'ms-3 small text-success';
                 } else {
-                    statusEl.textContent = '❌ Ошибка сохранения.';
+                    const err = await response.json().catch(() => ({}));
+                    statusEl.textContent = '❌ ' + (err.detail || 'Ошибка сохранения.');
                     statusEl.className = 'ms-3 small text-danger';
                 }
             } catch (e) {
@@ -388,6 +393,43 @@
             }
             setTimeout(() => { statusEl.textContent = ''; }, 3000);
         }
+
+        async function toggleBot() {
+            const btn = document.getElementById('botToggleBtn');
+            const badge = document.getElementById('botStatusBadge');
+            if (!btn) return;
+            btn.disabled = true;
+            try {
+                const res = await fetch('/api/bot/toggle', { method: 'POST' });
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const running = data.is_running;
+                badge.textContent = running ? '🟢 Запущен' : '🔴 Остановлен';
+                badge.className = 'badge fs-6 ' + (running ? 'bg-success' : 'bg-danger');
+                btn.textContent = running ? '⏹ Остановить' : '▶ Запустить';
+                btn.className = 'btn fw-semibold ' + (running ? 'btn-outline-danger' : 'btn-outline-success');
+            } catch (e) {
+                alert('Не удалось переключить состояние бота.');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function updateTemplateVisibility() {
+            const modeEl = document.getElementById('broadcastMode');
+            if (!modeEl) return;
+            const mode = parseInt(modeEl.value);
+            const t2 = document.getElementById('template2Card');
+            const t3 = document.getElementById('template3Card');
+            if (t2) t2.style.display = mode >= 2 ? '' : 'none';
+            if (t3) t3.style.display = mode >= 3 ? '' : 'none';
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            updateTemplateVisibility();
+            const modeEl = document.getElementById('broadcastMode');
+            if (modeEl) modeEl.addEventListener('change', updateTemplateVisibility);
+        });
 
         async function saveCustomRule() {
             const chatId = document.getElementById('customChatSelect').value;
