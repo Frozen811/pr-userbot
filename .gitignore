@@ -2,5 +2,16 @@ __pycache__/
 *.session
 *.session-journal
 .env
+.env.*
 app/data/*.db
 .venv/
+.idea/
+*.log
+unknown_errors.txt
+sessions/
+app/user_session.session
+.gitignore
+deploy.ps1
+deploy.sh
+logs.ps1
+status.ps1

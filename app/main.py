@@ -12,7 +12,7 @@ from telethon import TelegramClient, events
 from telethon.errors import (
     FloodWaitError, PeerIdInvalidError, ChatWriteForbiddenError,
     SlowModeWaitError, ChatRestrictedError, UserBannedInChannelError,
-    SessionPasswordNeededError
+    SessionPasswordNeededError, PasswordHashInvalidError
 )
 from telethon.extensions import html
 
@@ -509,15 +509,7 @@ async def broadcast_loop():
                     # Set cooldown for this specific chat
                     cooldown_time = datetime.now().timestamp() + e.seconds + 3
                     await database.set_chat_cooldown(chat_id, cooldown_time)
-                    # We do NOT sleep the whole loop here, just skip this chat next time
-                    # But if it's a global floodwait, Telethon might auto-sleep or raise.
-                    # FloodWaitError usually means per-request, but can be global.
-                    # If it's very long, it might be better to sleep, but requirement says "per-chat cooldown".
-                    # However, if we get FloodWait on one chat, we might get it on others if it's global.
-                    # Assuming per-chat or short waits. If e.seconds is huge, we might want to respect it globally?
-                    # The prompt says: "per-chat cooldown... sending to other chats should not stop".
-                    # So we just save cooldown and continue.
-                    await asyncio.sleep(random.randint(2, 5)) # small sleep before next chat
+                    await asyncio.sleep(random.randint(2, 5))
 
                 except (PeerIdInvalidError, ChatWriteForbiddenError, UserBannedInChannelError) as e:
                     log(f"❌ Бан/невалидный чат ({chat_title}). Удаляю...")
@@ -532,11 +524,6 @@ async def broadcast_loop():
                     log(f"🐌 Slowmode ({chat_title}): ожидание {e.seconds}с. Добавляю кулдаун чата.")
                     cooldown_time = datetime.now().timestamp() + e.seconds + 3
                     await database.set_chat_cooldown(chat_id, cooldown_time)
-
-                    # Also update status for UI visibility if needed, but cooldown table handles logic
-                    # next_run = datetime.now().timestamp() + e.seconds + 5
-                    # next_run_dt = datetime.fromtimestamp(next_run)
-                    # await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error=f"Slowmode {e.seconds}s")
 
                 except ChatRestrictedError:
                     log(f"🔇 Ограничения ({chat_title}). Ставлю паузу на 2ч.")
@@ -569,19 +556,52 @@ async def broadcast_loop():
             logger.error(f"Критическая ошибка цикла: {e}", exc_info=True)
             await asyncio.sleep(60)
 
-# --- Check Auth & QR ---
-async def check_auth():
-    if not await client.is_user_authorized():
-        qr = await client.qr_login()
-        print("Обнаружен вход по QR. Генерирую QR...")
-        qr_obj = qrcode.QRCode()
-        qr_obj.add_data(qr.url)
-        qr_obj.print_ascii(invert=True)
-        print("Пожалуйста, отсканируйте QR-код в приложении Telegram.")
+# --- Telethon Background Task ---
 
-        # Wait for login
-        await qr.wait()
-        print("Вход выполнен успешно!")
+async def init_telethon():
+    try:
+        await client.connect()
+
+        if not await client.is_user_authorized():
+            try:
+                qr_login = await client.qr_login()
+                print("Сессия не найдена. Генерирую QR-код...")
+                qr = qrcode.QRCode()
+                qr.add_data(qr_login.url)
+                qr.print_ascii(invert=True)
+                print("Сканируйте код выше!")
+                await qr_login.wait()
+                print("Вход выполнен!")
+            except SessionPasswordNeededError:
+                print("Включена двухэтапная проверка. Пробую пароль...")
+                if config.PASSWORD:
+                    try:
+                        await client.sign_in(password=config.PASSWORD)
+                        print("Вход выполнен по паролю!")
+                    except PasswordHashInvalidError:
+                        print("❌ CRITICAL: Invalid 2FA password in .env. Please update it and restart.")
+                        return
+                else:
+                    print("ОШИБКА: включена 2FA, но 'PASSWORD' отсутствует в .env!")
+                    return
+            except Exception as e:
+                print(f"Ошибка входа: {e}")
+                return
+
+        log("Telegram-клиент подключен!")
+
+        log("Загружаю диалоги для кэша сущностей...")
+        await client.get_dialogs()
+        log("Диалоги синхронизированы!")
+
+        # Start Broadcast Loop
+        asyncio.create_task(broadcast_loop())
+        
+        # Run Client until disconnected
+        await client.run_until_disconnected()
+
+    except Exception as e:
+        logger.error(f"Ошибка в фоновой задаче Telethon: {e}")
 
 # --- Main Entry ---
 
@@ -589,54 +609,13 @@ async def main():
     # 1. Init DB
     await database.init_db()
 
-    # 2. Start Web Server
-    # uvicorn needs to run on the loop.
-    # web_server.run_server() is an async func blocking? No, uvicorn.Server.serve() is blocking.
-    # We should run it as a task.
+    # 2. Start Telethon Background Task
+    asyncio.create_task(init_telethon())
+
+    # 3. Start Web Server and await it to keep the process running
     web_task = asyncio.create_task(web_server.run_server())
     log("Веб-сервер запущен на порту 8080.")
-
-    # 3. Connect Client
-    await client.connect()
-
-    # 4. Check Auth
-    if not await client.is_user_authorized():
-        # Handle QR login manually because client.start() logic is tricky to customize for strictly QR
-        # client.qr_login returns a QRLogin object with .url and .wait()
-        try:
-            qr_login = await client.qr_login()
-            print("Сессия не найдена. Генерирую QR-код...")
-            qr = qrcode.QRCode()
-            qr.add_data(qr_login.url)
-            qr.print_ascii(invert=True)
-            print("Сканируйте код выше!")
-            await qr_login.wait()
-            print("Вход выполнен!")
-        except SessionPasswordNeededError:
-            print("Включена двухэтапная проверка. Пробую пароль...")
-            if config.PASSWORD:
-                await client.sign_in(password=config.PASSWORD)
-                print("Вход выполнен по паролю!")
-            else:
-                print("ОШИБКА: включена 2FA, но 'PASSWORD' отсутствует в .env!")
-                return
-        except Exception as e:
-            print(f"Ошибка входа: {e}")
-            return
-
-    log("Telegram-клиент подключен!")
-
-    # Fix for 'Could not find the input entity'
-    # We must fetch dialogs once to populate Telethon's internal cache with access hashes
-    log("Загружаю диалоги для кэша сущностей...")
-    await client.get_dialogs()
-    log("Диалоги синхронизированы!")
-
-    # 5. Start Broadcast Loop
-    broadcast_task = asyncio.create_task(broadcast_loop())
-    
-    # 6. Run Client until disconnected
-    await client.run_until_disconnected()
+    await web_task
 
 if __name__ == '__main__':
     try:
