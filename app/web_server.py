@@ -9,6 +9,7 @@ from app import database, spintax
 import os
 from collections import deque
 from pydantic import BaseModel
+from typing import Any, Awaitable, Callable, Optional
 
 app = FastAPI()
 
@@ -39,6 +40,26 @@ log_buffer = deque(maxlen=50)
 # Shared bot state (cycle index survives web restarts, resets on process restart)
 bot_state = {"cycle_index": 0}
 
+# Telegram folder import shared state
+folder_importer: Optional[Callable[[str, Optional[Callable[[dict[str, Any]], Awaitable[None]]]], Awaitable[dict[str, Any]]]] = None
+folder_import_state = {
+    "running": False,
+    "processed": 0,
+    "total": 0,
+    "added": 0,
+    "duplicates": 0,
+    "errors": 0,
+    "last_error": None,
+    "completed": False,
+    "already_joined": False,
+    "logs": []
+}
+
+
+def set_folder_importer(importer: Callable[[str, Optional[Callable[[dict[str, Any]], Awaitable[None]]]], Awaitable[dict[str, Any]]]):
+    global folder_importer
+    folder_importer = importer
+
 def add_log(message: str):
     log_buffer.append(message)
 
@@ -60,6 +81,10 @@ class ConfigRequest(BaseModel):
     min_delay: int = 30
     max_delay: int = 60
     cycle_delay_seconds: int = 120
+
+
+class ImportFolderRequest(BaseModel):
+    url: str
 
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
 async def dashboard(request: Request):
@@ -164,6 +189,81 @@ async def config_page(request: Request):
         "tab": "config",
         "config": conf
     })
+
+
+@app.get("/import-folders", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
+async def import_folders_page(request: Request):
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "tab": "import_folders"
+    })
+
+
+@app.get("/api/import-folder/status", dependencies=[Depends(verify_credentials)])
+async def api_import_folder_status():
+    return JSONResponse(content=folder_import_state)
+
+
+@app.post("/api/import-folder", dependencies=[Depends(verify_credentials)])
+async def api_import_folder(data: ImportFolderRequest):
+    if folder_import_state["running"]:
+        raise HTTPException(status_code=409, detail="Импорт уже выполняется.")
+
+    if not folder_importer:
+        raise HTTPException(status_code=503, detail="Импорт временно недоступен: Telegram клиент не готов.")
+
+    folder_import_state.update({
+        "running": True,
+        "processed": 0,
+        "total": 0,
+        "added": 0,
+        "duplicates": 0,
+        "errors": 0,
+        "last_error": None,
+        "completed": False,
+        "already_joined": False,
+        "logs": ["Запуск импорта папки..."]
+    })
+
+    async def _progress_cb(progress: dict[str, Any]):
+        folder_import_state["processed"] = progress.get("processed", folder_import_state["processed"])
+        folder_import_state["total"] = progress.get("total", folder_import_state["total"])
+        folder_import_state["already_joined"] = bool(progress.get("already_joined", folder_import_state["already_joined"]))
+
+        if progress.get("added"):
+            folder_import_state["added"] += 1
+            folder_import_state["logs"].append(
+                f"+ Добавлен чат: {progress.get('chat_title', 'Unknown')} ({progress.get('chat_id', '-')})"
+            )
+        elif progress.get("error"):
+            folder_import_state["errors"] += 1
+            folder_import_state["logs"].append(f"! Ошибка чата: {progress.get('error')}")
+        else:
+            folder_import_state["duplicates"] += 1
+            folder_import_state["logs"].append(
+                f"= Дубликат: {progress.get('chat_title', 'Unknown')} ({progress.get('chat_id', '-')})"
+            )
+
+        if len(folder_import_state["logs"]) > 200:
+            folder_import_state["logs"] = folder_import_state["logs"][-200:]
+
+    async def _run_import():
+        try:
+            result = await folder_importer(data.url, _progress_cb)
+            folder_import_state["total"] = result.get("total", folder_import_state["total"])
+            folder_import_state["already_joined"] = bool(result.get("already_joined", folder_import_state["already_joined"]))
+            folder_import_state["logs"].append(
+                f"Готово: добавлено {result.get('added', 0)}, дубликатов {result.get('duplicates', 0)}"
+            )
+        except Exception as exc:
+            folder_import_state["last_error"] = str(exc)
+            folder_import_state["logs"].append(f"Критическая ошибка импорта: {exc}")
+        finally:
+            folder_import_state["running"] = False
+            folder_import_state["completed"] = True
+
+    asyncio.create_task(_run_import())
+    return {"status": "started"}
 
 @app.post("/config/update", dependencies=[Depends(verify_credentials)])
 async def update_config(

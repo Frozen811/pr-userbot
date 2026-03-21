@@ -7,8 +7,10 @@ import qrcode
 from datetime import datetime
 from pytz import timezone
 import gc
+from typing import Any, Awaitable, Callable, Optional
 
 from telethon import TelegramClient, events
+from telethon import functions, types
 from telethon.errors import (
     FloodWaitError, PeerIdInvalidError, ChatWriteForbiddenError,
     SlowModeWaitError, ChatRestrictedError, UserBannedInChannelError,
@@ -35,6 +37,134 @@ TZ_KYIV = timezone('Europe/Kyiv')
 
 # --- Client Init ---
 client = TelegramClient(SESSION_PATH, config.API_ID, config.API_HASH)
+
+
+def _extract_chatlist_slug(folder_url: str) -> str:
+    url = (folder_url or "").strip()
+    if not url:
+        raise ValueError("Ссылка на папку не указана.")
+
+    if "t.me/addlist/" in url:
+        slug = url.split("t.me/addlist/", 1)[1]
+    elif "telegram.me/addlist/" in url:
+        slug = url.split("telegram.me/addlist/", 1)[1]
+    else:
+        slug = url
+
+    slug = slug.split("?", 1)[0].split("#", 1)[0].strip("/").strip()
+    if not slug:
+        raise ValueError("Невалидная ссылка папки Telegram. Ожидается t.me/addlist/...")
+    return slug
+
+
+def _chat_title(chat_obj) -> str:
+    title = getattr(chat_obj, "title", None)
+    if title:
+        return title
+    first_name = getattr(chat_obj, "first_name", "") or ""
+    last_name = getattr(chat_obj, "last_name", "") or ""
+    full_name = (f"{first_name} {last_name}").strip()
+    if full_name:
+        return full_name
+    username = getattr(chat_obj, "username", None)
+    if username:
+        return f"@{username}"
+    return f"chat_{getattr(chat_obj, 'id', 'unknown')}"
+
+
+async def import_folder_chats(
+    folder_url: str,
+    progress_cb: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None
+) -> dict[str, Any]:
+    """
+    Imports chats from Telegram chat-folder invite link (t.me/addlist/...).
+    Uses CheckChatlistInviteRequest first, then JoinChatlistInviteRequest.
+    """
+    if not client.is_connected():
+        await client.connect()
+
+    if not await client.is_user_authorized():
+        raise RuntimeError("Telegram client is not authorized yet.")
+
+    slug = _extract_chatlist_slug(folder_url)
+
+    # 1) Inspect folder invite without joining.
+    invite_info = await client(functions.chatlists.CheckChatlistInviteRequest(slug=slug))
+
+    chats: list[Any] = []
+    peers_to_join: list[Any] = []
+    already_joined = False
+
+    if isinstance(invite_info, types.chatlists.ChatlistInvite):
+        chats = list(getattr(invite_info, "chats", []) or [])
+        peers_to_join = list(getattr(invite_info, "peers", []) or [])
+    elif isinstance(invite_info, types.chatlists.ChatlistInviteAlready):
+        chats = list(getattr(invite_info, "chats", []) or [])
+        peers_to_join = list(getattr(invite_info, "missing_peers", []) or [])
+        already_joined = not bool(peers_to_join)
+    else:
+        raise RuntimeError("Не удалось обработать приглашение папки.")
+
+    # 2) Join chat-folder invite using the peers returned by check request.
+    if peers_to_join:
+        input_peers = []
+        for peer in peers_to_join:
+            try:
+                input_peers.append(await client.get_input_entity(peer))
+            except Exception:
+                continue
+
+        if input_peers:
+            await client(functions.chatlists.JoinChatlistInviteRequest(slug=slug, peers=input_peers))
+
+    total = len(chats)
+    added = 0
+    duplicates = 0
+    errors: list[str] = []
+
+    for idx, chat in enumerate(chats, start=1):
+        try:
+            chat_id = int(chat.id)
+            title = _chat_title(chat)
+            is_added = await database.add_chat(chat_id, title)
+            if is_added:
+                added += 1
+            else:
+                duplicates += 1
+
+            if progress_cb:
+                await progress_cb({
+                    "processed": idx,
+                    "total": total,
+                    "chat_id": chat_id,
+                    "chat_title": title,
+                    "added": is_added,
+                    "already_joined": already_joined
+                })
+        except Exception as exc:
+            errors.append(str(exc))
+            if progress_cb:
+                await progress_cb({
+                    "processed": idx,
+                    "total": total,
+                    "chat_id": None,
+                    "chat_title": None,
+                    "added": False,
+                    "error": str(exc),
+                    "already_joined": already_joined
+                })
+
+        # Anti-flood pause while saving chats to DB.
+        await asyncio.sleep(0.8)
+
+    return {
+        "slug": slug,
+        "total": total,
+        "added": added,
+        "duplicates": duplicates,
+        "errors": errors,
+        "already_joined": already_joined
+    }
 
 # --- Commands ---
 
@@ -608,6 +738,9 @@ async def init_telethon():
 async def main():
     # 1. Init DB
     await database.init_db()
+
+    # Register Telegram folder import callback for web API.
+    web_server.set_folder_importer(import_folder_chats)
 
     # 2. Start Telethon Background Task
     asyncio.create_task(init_telethon())
