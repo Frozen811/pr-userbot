@@ -369,47 +369,6 @@ async def cmd_stop(event):
     await event.edit("🛑 **Рассылка остановлена!**")
     log("Рассылка остановлена вручную.")
 
-# --- Event Listeners ---
-
-@client.on(events.NewMessage(incoming=True))
-async def on_new_reply(event):
-    """
-    Lead Catcher: Forwards replies to your broadcast messages to 'Saved Messages'.
-    """
-    try:
-        if not event.is_reply:
-            return
-
-        # Check if the message replied to is OURS (outgoing=True)
-        reply_to = await event.get_reply_message()
-        if not reply_to or not reply_to.out:
-            return
-
-        # Get Chat Details
-        chat = await event.get_chat()
-        chat_title = getattr(chat, 'title', 'Личный чат')
-
-        # Get Sender Details
-        sender = await event.get_sender()
-        sender_name = getattr(sender, 'first_name', 'Неизвестно')
-
-        # Construct Notification
-        log(f"🔔 Новый ответ в {chat_title} от {sender_name}")
-
-        notification_text = (
-            f"🔔 **Обнаружен отклик!**\n\n"
-            f"📍 **Чат:** {chat_title}\n"
-            f"👤 **Пользователь:** {sender_name}\n\n"
-            f"💬 **Сообщение:**\n{event.text}"
-        )
-
-        # Send to Saved Messages (me)
-        await client.send_message('me', notification_text)
-        await event.forward_to('me') # Also forward the actual message context
-
-    except Exception as e:
-        logger.error(f"Ошибка в перехватчике откликов: {e}")
-
 # --- Broadcast Loop ---
 
 async def broadcast_loop():
