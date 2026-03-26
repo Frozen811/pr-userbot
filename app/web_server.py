@@ -15,8 +15,8 @@ app = FastAPI()
 
 # HTTP Basic Auth
 security = HTTPBasic()
-ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
-ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
+ADMIN_USER = os.getenv("ADMIN_USER") or "admin"
+ADMIN_PASS = os.getenv("ADMIN_PASS") or secrets.token_urlsafe(32)
 
 def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
     user_ok = secrets.compare_digest(credentials.username.encode(), ADMIN_USER.encode())

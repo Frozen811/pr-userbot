@@ -3,6 +3,46 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-PASSWORD = os.getenv("PASSWORD")
+API_ID = 2040
+API_HASH = "b18441a1ff607e10a989891a5462e627"
+PHONE_NUMBER = os.getenv("PHONE_NUMBER", "")
+PASSWORD = os.getenv("PASSWORD", "")
+
+DEVICE_MODEL = "Lenovo G580"
+SYSTEM_VERSION = "Windows 10 x64"
+APP_VERSION = "6.6.2 x64"
+LANG_CODE = "ru"
+SYSTEM_LANG_CODE = "ru-RU"
+LANG_PACK = "tdesktop"
+
+SESSION_DIR = "sessions"
+SESSION_NAME = "user_session"
+
+TIMEZONE = "Europe/Kyiv"
+NIGHT_MODE_START = 23
+NIGHT_MODE_END = 8
+NIGHT_MODE_OFFSET_MIN = 2
+NIGHT_MODE_OFFSET_MAX = 27
+
+MIN_DELAY = 45.0
+MAX_DELAY = 140.0
+
+FLOODWAIT_BASE_MULTIPLIER = 1.5
+FLOODWAIT_EXTRA_SLEEP_MIN = 15
+FLOODWAIT_EXTRA_SLEEP_MAX = 90
+
+SLEEP_AFTER_BROADCAST_MIN = 40 * 60
+SLEEP_AFTER_BROADCAST_MAX = 120 * 60
+
+TYPING_SPEED_WPM = 60
+MIN_READING_DELAY = 2.0
+MAX_READING_DELAY = 5.0
+
+DEVICE_CONFIG = {
+    "device_model": DEVICE_MODEL,
+    "system_version": SYSTEM_VERSION,
+    "app_version": APP_VERSION,
+    "lang_code": LANG_CODE,
+    "system_lang_code": SYSTEM_LANG_CODE,
+    "lang_pack": LANG_PACK,
+}

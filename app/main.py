@@ -1,716 +1,452 @@
+"""
+Unified runtime for Pyrogram userbot, web panel, and background worker.
+"""
+
 import asyncio
 import logging
-import random
 import os
-import sys
-import qrcode
+import random
+import re
 from datetime import datetime
-from pytz import timezone
-import gc
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from telethon import TelegramClient, events
-from telethon import functions, types
-from telethon.errors import (
-    FloodWaitError, PeerIdInvalidError, ChatWriteForbiddenError,
-    SlowModeWaitError, ChatRestrictedError, UserBannedInChannelError,
-    SessionPasswordNeededError, PasswordHashInvalidError
-)
-from telethon.extensions import html
+import pytz
+from pyrogram import Client
+from pyrogram.errors import RPCError
 
-from app import config, database, web_server, spintax
+from app import anti_spam, client_manager, config, database, human_behavior, safe_handler, web_server
 
-# --- Logging Setup ---
 logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-def log(message):
+client: Client = client_manager.ClientManager.create_client()
+
+BROADCAST_CHATS: List[int] = []
+FAILED_CHATS: Dict[int, str] = {}
+TZ_KYIV = pytz.timezone(config.TIMEZONE)
+
+
+def _log(message: str) -> None:
     logger.info(message)
-    web_server.add_log(f"{datetime.now().strftime('%H:%M:%S')} - {message}")
-
-# --- Constants ---
-SESSION_PATH = 'sessions/user_session' # Telethon adds .session automatically
-TZ_KYIV = timezone('Europe/Kyiv')
-
-# --- Client Init ---
-client = TelegramClient(SESSION_PATH, config.API_ID, config.API_HASH)
+    web_server.add_log(message)
 
 
-def _extract_chatlist_slug(folder_url: str) -> str:
-    url = (folder_url or "").strip()
-    if not url:
-        raise ValueError("Ссылка на папку не указана.")
-
-    if "t.me/addlist/" in url:
-        slug = url.split("t.me/addlist/", 1)[1]
-    elif "telegram.me/addlist/" in url:
-        slug = url.split("telegram.me/addlist/", 1)[1]
-    else:
-        slug = url
-
-    slug = slug.split("?", 1)[0].split("#", 1)[0].strip("/").strip()
-    if not slug:
-        raise ValueError("Невалидная ссылка папки Telegram. Ожидается t.me/addlist/...")
-    return slug
+def _extract_addlist_slug(url: str) -> str:
+    match = re.search(r"(?:https?://)?t\.me/addlist/([A-Za-z0-9_-]+)", (url or "").strip())
+    if not match:
+        raise ValueError("Некорректная ссылка. Ожидается формат t.me/addlist/<slug>")
+    return match.group(1)
 
 
-def _chat_title(chat_obj) -> str:
-    title = getattr(chat_obj, "title", None)
-    if title:
-        return title
-    first_name = getattr(chat_obj, "first_name", "") or ""
-    last_name = getattr(chat_obj, "last_name", "") or ""
-    full_name = (f"{first_name} {last_name}").strip()
-    if full_name:
-        return full_name
-    username = getattr(chat_obj, "username", None)
-    if username:
-        return f"@{username}"
-    return f"chat_{getattr(chat_obj, 'id', 'unknown')}"
+def _resolve_template(settings: Dict[str, Any], cycle_index: int) -> str:
+    mode = max(1, min(3, int(settings.get("broadcast_mode", 1) or 1)))
+    templates = [
+        settings.get("message_template", "") or "",
+        settings.get("message_template_2", "") or "",
+        settings.get("message_template_3", "") or "",
+    ]
+
+    if mode == 1:
+        return templates[0]
+
+    if mode == 2:
+        return templates[cycle_index % 2]
+
+    return templates[cycle_index % 3]
 
 
-async def import_folder_chats(
-    folder_url: str,
-    progress_cb: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None
-) -> dict[str, Any]:
-    """
-    Imports chats from Telegram chat-folder invite link (t.me/addlist/...).
-    Uses CheckChatlistInviteRequest first, then JoinChatlistInviteRequest.
-    """
-    if not client.is_connected():
-        await client.connect()
+def _resolve_chat_delays(chat: Dict[str, Any], settings: Dict[str, Any]) -> tuple[int, int]:
+    global_min = int(settings.get("min_delay", 30) or 30)
+    global_max = int(settings.get("max_delay", 60) or 60)
 
-    if not await client.is_user_authorized():
-        raise RuntimeError("Telegram client is not authorized yet.")
+    if global_min > global_max:
+        global_min, global_max = global_max, global_min
 
-    slug = _extract_chatlist_slug(folder_url)
+    is_custom = int(chat.get("is_custom", 0) or 0) == 1
+    custom_min = int(chat.get("custom_min_delay", 0) or 0)
+    custom_max = int(chat.get("custom_max_delay", 0) or 0)
 
-    # 1) Inspect folder invite without joining.
-    invite_info = await client(functions.chatlists.CheckChatlistInviteRequest(slug=slug))
+    if is_custom and custom_min >= 0 and custom_max >= 0 and custom_min <= custom_max and custom_max > 0:
+        return custom_min, custom_max
 
-    chats: list[Any] = []
-    peers_to_join: list[Any] = []
-    already_joined = False
+    return global_min, global_max
 
-    if isinstance(invite_info, types.chatlists.ChatlistInvite):
-        chats = list(getattr(invite_info, "chats", []) or [])
-        peers_to_join = list(getattr(invite_info, "peers", []) or [])
-    elif isinstance(invite_info, types.chatlists.ChatlistInviteAlready):
-        chats = list(getattr(invite_info, "chats", []) or [])
-        peers_to_join = list(getattr(invite_info, "missing_peers", []) or [])
-        already_joined = not bool(peers_to_join)
-    else:
-        raise RuntimeError("Не удалось обработать приглашение папки.")
 
-    # 2) Join chat-folder invite using the peers returned by check request.
-    if peers_to_join:
-        input_peers = []
-        for peer in peers_to_join:
-            try:
-                input_peers.append(await client.get_input_entity(peer))
-            except Exception:
-                continue
+async def _is_running() -> bool:
+    settings = await database.get_settings()
+    return bool(settings.get("is_running", 0))
 
-        if input_peers:
-            await client(functions.chatlists.JoinChatlistInviteRequest(slug=slug, peers=input_peers))
 
-    total = len(chats)
+async def add_chat_to_broadcast(chat_id: int, chat_title: Optional[str] = None) -> bool:
+    if chat_id not in BROADCAST_CHATS:
+        BROADCAST_CHATS.append(chat_id)
+        await database.add_chat(chat_id, chat_title or str(chat_id))
+        _log(f"Добавлен чат: {chat_title or chat_id}")
+        return True
+    return False
+
+
+async def remove_chat_from_broadcast(chat_id: int) -> None:
+    if chat_id in BROADCAST_CHATS:
+        BROADCAST_CHATS.remove(chat_id)
+
+    FAILED_CHATS[chat_id] = datetime.now(TZ_KYIV).isoformat()
+    await database.update_chat_status(chat_id, "error", last_error="Removed by error handler")
+    _log(f"Удален чат из рассылки: {chat_id}")
+
+
+async def send_message_with_anti_spam(
+    client: Client,
+    chat_id: int,
+    text: str,
+    media_path: Optional[str] = None,
+    min_delay: Optional[int] = None,
+    max_delay: Optional[int] = None,
+    should_continue: Optional[Callable[[], Awaitable[bool]]] = None,
+) -> bool:
+    if should_continue and not await should_continue():
+        return False
+
+    if await human_behavior.HumanBehaviorSimulator.enforce_night_mode(config.TIMEZONE, client=client):
+        _log("Ночной режим активен, ожидание до утра")
+
+    unique_text = anti_spam.uniqualize_text(text)
+
+    await human_behavior.HumanBehaviorSimulator.simulate_pre_send_activity(client, chat_id, unique_text)
+
+    try:
+        if media_path and os.path.exists(media_path):
+            await client.send_document(chat_id, media_path, caption=unique_text)
+            _log(f"Сообщение отправлено в {chat_id} (с медиа)")
+        else:
+            await client.send_message(chat_id, unique_text)
+            _log(f"Сообщение отправлено в {chat_id}")
+
+        delay_min = float(min_delay) if min_delay is not None else float(config.MIN_DELAY)
+        delay_max = float(max_delay) if max_delay is not None else float(config.MAX_DELAY)
+        await human_behavior.HumanBehaviorSimulator.random_delay(delay_min, delay_max)
+        return True
+
+    except Exception as exc:
+        await safe_handler.TelegramErrorHandler.handle_error(
+            exc,
+            chat_id=chat_id,
+            remove_callback=remove_chat_from_broadcast,
+        )
+        if isinstance(exc, RPCError):
+            logger.error("API error for chat %s: %s", chat_id, exc)
+        else:
+            logger.error("Unexpected error for chat %s: %s", chat_id, exc)
+        return False
+
+
+async def broadcast_to_chats(
+    text: str,
+    media_path: Optional[str] = None,
+    randomize_chat_order: bool = True,
+) -> Dict[str, int]:
+    if not BROADCAST_CHATS:
+        return {"sent": 0, "failed": 0, "skipped": 0}
+
+    chats = BROADCAST_CHATS.copy()
+    if randomize_chat_order:
+        random.shuffle(chats)
+
+    settings = await database.get_settings()
+    stats = {"sent": 0, "failed": 0, "skipped": 0}
+
+    for chat_id in chats:
+        ok = await send_message_with_anti_spam(
+            client,
+            chat_id,
+            text,
+            media_path,
+            int(settings.get("min_delay", 30) or 30),
+            int(settings.get("max_delay", 60) or 60),
+        )
+        if ok:
+            stats["sent"] += 1
+        else:
+            stats["failed"] += 1
+
+    return stats
+
+
+async def safe_get_chat_title(client: Client, chat_id: int) -> str:
+    try:
+        chat = await client.get_chat(chat_id)
+        return chat.title or chat.first_name or str(chat_id)
+    except Exception:
+        return str(chat_id)
+
+
+async def initialize_client_connection() -> bool:
+    try:
+        await client_manager.ClientManager.initialize_client(client)
+        me = await client.get_me()
+        _log(f"Клиент авторизован: {me.first_name} (@{me.username})")
+        return True
+    except Exception as exc:
+        logger.error("Ошибка инициализации клиента: %s", exc)
+        return False
+
+
+async def close_client_connection() -> None:
+    try:
+        await client.stop()
+        _log("Клиент остановлен")
+    except Exception as exc:
+        logger.error("Ошибка при остановке клиента: %s", exc)
+
+
+async def get_broadcast_stats() -> Dict[str, Any]:
+    return {
+        "total_chats": len(BROADCAST_CHATS),
+        "failed_chats": len(FAILED_CHATS),
+        "broadcast_chats": BROADCAST_CHATS.copy(),
+        "failed_chats_list": FAILED_CHATS.copy(),
+    }
+
+
+async def clear_failed_chats() -> int:
+    count = len(FAILED_CHATS)
+    FAILED_CHATS.clear()
+    return count
+
+
+async def get_current_time_kyiv() -> str:
+    now = datetime.now(TZ_KYIV)
+    return now.strftime("%H:%M:%S %Y-%m-%d")
+
+
+async def import_folder_from_link(
+    url: str,
+    progress_cb: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    slug = _extract_addlist_slug(url)
+
+    try:
+        from pyrogram.raw.functions.chatlists import CheckChatlistInvite, JoinChatlistInvite
+    except Exception as exc:
+        raise RuntimeError("Эта версия Pyrogram не поддерживает chatlists API") from exc
+
+    invite = await client.invoke(CheckChatlistInvite(slug=slug))
+
+    peers = list(getattr(invite, "peers", []) or [])
+    chats_raw = list(getattr(invite, "chats", []) or [])
+    already_joined = bool(getattr(invite, "already_joined", False))
+
+    if peers:
+        try:
+            await client.invoke(JoinChatlistInvite(slug=slug, peers=peers))
+        except Exception as exc:
+            # If already joined or partially joined, continue with discovered chats.
+            logger.warning("JoinChatlistInvite warning: %s", exc)
+
+    existing = {int(c["chat_id"]) for c in await database.get_chats()}
     added = 0
     duplicates = 0
-    errors: list[str] = []
+    errors = 0
 
-    for idx, chat in enumerate(chats, start=1):
+    total = len(chats_raw)
+    processed = 0
+
+    for raw_chat in chats_raw:
+        processed += 1
         try:
-            chat_id = int(chat.id)
-            title = _chat_title(chat)
-            is_added = await database.add_chat(chat_id, title)
-            if is_added:
+            raw_id = int(getattr(raw_chat, "id"))
+            title = getattr(raw_chat, "title", None) or str(raw_id)
+
+            class_name = raw_chat.__class__.__name__.lower()
+            if "channel" in class_name:
+                chat_id = int(f"-100{raw_id}")
+            elif "chat" in class_name:
+                chat_id = -raw_id
+            else:
+                chat_id = raw_id
+
+            if chat_id in existing:
+                duplicates += 1
+                if progress_cb:
+                    await progress_cb(
+                        {
+                            "processed": processed,
+                            "total": total,
+                            "added": False,
+                            "chat_id": chat_id,
+                            "chat_title": title,
+                            "already_joined": already_joined,
+                        }
+                    )
+                continue
+
+            ok = await database.add_chat(chat_id, title)
+            if ok:
                 added += 1
+                existing.add(chat_id)
+                if progress_cb:
+                    await progress_cb(
+                        {
+                            "processed": processed,
+                            "total": total,
+                            "added": True,
+                            "chat_id": chat_id,
+                            "chat_title": title,
+                            "already_joined": already_joined,
+                        }
+                    )
             else:
                 duplicates += 1
-
-            if progress_cb:
-                await progress_cb({
-                    "processed": idx,
-                    "total": total,
-                    "chat_id": chat_id,
-                    "chat_title": title,
-                    "added": is_added,
-                    "already_joined": already_joined
-                })
+                if progress_cb:
+                    await progress_cb(
+                        {
+                            "processed": processed,
+                            "total": total,
+                            "added": False,
+                            "chat_id": chat_id,
+                            "chat_title": title,
+                            "already_joined": already_joined,
+                        }
+                    )
         except Exception as exc:
-            errors.append(str(exc))
+            errors += 1
             if progress_cb:
-                await progress_cb({
-                    "processed": idx,
-                    "total": total,
-                    "chat_id": None,
-                    "chat_title": None,
-                    "added": False,
-                    "error": str(exc),
-                    "already_joined": already_joined
-                })
-
-        # Anti-flood pause while saving chats to DB.
-        await asyncio.sleep(0.8)
+                await progress_cb(
+                    {
+                        "processed": processed,
+                        "total": total,
+                        "error": str(exc),
+                        "already_joined": already_joined,
+                    }
+                )
 
     return {
-        "slug": slug,
         "total": total,
         "added": added,
         "duplicates": duplicates,
         "errors": errors,
-        "already_joined": already_joined
+        "already_joined": already_joined,
     }
 
-# --- Commands ---
 
-@client.on(events.NewMessage(outgoing=True, pattern=r'\.setmedia(.*)'))
-async def cmd_setmedia(event):
-    args = event.pattern_match.group(1).strip()
+async def _sleep_with_pause_check(seconds: int) -> None:
+    remaining = max(0, int(seconds))
+    while remaining > 0:
+        if not await _is_running():
+            return
+        step = min(2, remaining)
+        await asyncio.sleep(step)
+        remaining -= step
 
-    if args == 'clear':
-        current_path = await database.get_media_path()
-        if current_path and os.path.exists(current_path):
-            try:
-                os.remove(current_path)
-            except:
-                pass
-        await database.set_media_path("")
-        await event.edit("🗑 Медиа удалено.")
-        log("Медиа удалено пользователем.")
-        return
 
-    reply = await event.get_reply_message()
-    if not reply or not reply.media:
-        await event.edit("⚠️ Ответьте на фото/видео командой `.setmedia`")
-        return
-
-    await event.edit("📥 Скачиваю медиа...")
-    try:
-        # Download to app/data/broadcast_media (Telethon adds extension)
-        path = await reply.download_media(file='app/data/broadcast_media')
-        await database.set_media_path(path)
-        await event.edit("✅ Медиа сохранено!")
-        log(f"Медиа установлено: {path}")
-    except Exception as e:
-        await event.edit(f"❌ Ошибка: {e}")
-        logger.error(f"Ошибка загрузки медиа: {e}")
-
-@client.on(events.NewMessage(outgoing=True, pattern=r'\.add'))
-async def cmd_add(event):
-    chat = await event.get_chat()
-    chat_id = chat.id
-    chat_title = getattr(chat, 'title', str(chat_id))
-
-    success = await database.add_chat(chat_id, chat_title)
-    if success:
-        await event.edit(f"✅ Чат сохранён: **{chat_title}**")
-        log(f"Добавлен чат: {chat_title} ({chat_id})")
-        await asyncio.sleep(3)
-        await event.delete()
-    else:
-        await event.edit(f"⚠️ Чат **{chat_title}** уже есть в базе.")
-        await asyncio.sleep(3)
-        await event.delete()
-
-@client.on(events.NewMessage(outgoing=True, pattern=r'\.del'))
-async def cmd_del(event):
-    chat = await event.get_chat()
-    await database.remove_chat(chat.id)
-    await event.edit(f"🗑 Удалён: **{getattr(chat, 'title', chat.id)}**")
-    log(f"Удалён чат: {getattr(chat, 'title', chat.id)}")
-
-@client.on(events.NewMessage(outgoing=True, pattern=r'\.set (.+)'))
-async def cmd_set(event):
-    if event.message.entities:
-        # If message has formatting entities, convert key text to HTML
-        full_html = html.unparse(event.message.message, event.message.entities)
-        # Remove the command ".set " from the start
-        # We split by the first space which separates cmd and args
-        parts = full_html.split(maxsplit=1)
-        text = parts[1] if len(parts) > 1 else event.pattern_match.group(1)
-    else:
-        text = event.pattern_match.group(1)
-
-    # Get current settings to preserve other values
-    s = await database.get_settings()
-
-    await database.update_settings(
-        template=text,
-        template_2=s.get('message_template_2', ''),
-        template_3=s.get('message_template_3', ''),
-        broadcast_mode=s.get('broadcast_mode', 1),
-        limit=s['daily_limit'],
-        min_delay=s.get('min_delay', 30),
-        max_delay=s.get('max_delay', 60),
-        cycle_delay=s.get('cycle_delay_seconds', 120)
-    )
-    await event.edit("📝 **Шаблон 1 сохранён!**")
-    log("Шаблон обновлён через команду.")
-
-@client.on(events.NewMessage(outgoing=True, pattern=r'\.set2 (.+)'))
-async def cmd_set2(event):
-    if event.message.entities:
-        # If message has formatting entities, convert key text to HTML
-        full_html = html.unparse(event.message.message, event.message.entities)
-        # Remove the command ".set2 " from the start
-        parts = full_html.split(maxsplit=1)
-        text = parts[1] if len(parts) > 1 else event.pattern_match.group(1)
-    else:
-        text = event.pattern_match.group(1)
-
-    s = await database.get_settings()
-
-    await database.update_settings(
-        template=s.get('message_template', ''),
-        template_2=text,
-        template_3=s.get('message_template_3', ''),
-        broadcast_mode=s.get('broadcast_mode', 1),
-        limit=s['daily_limit'],
-        min_delay=s.get('min_delay', 30),
-        max_delay=s.get('max_delay', 60),
-        cycle_delay=s.get('cycle_delay_seconds', 120)
-    )
-    await event.edit("📝 **Шаблон 2 сохранён!**")
-    log("Шаблон 2 обновлён через команду.")
-
-@client.on(events.NewMessage(outgoing=True, pattern=r'\.set3 (.+)'))
-async def cmd_set3(event):
-    if event.message.entities:
-        full_html = html.unparse(event.message.message, event.message.entities)
-        parts = full_html.split(maxsplit=1)
-        text = parts[1] if len(parts) > 1 else event.pattern_match.group(1)
-    else:
-        text = event.pattern_match.group(1)
-
-    s = await database.get_settings()
-
-    await database.update_settings(
-        template=s.get('message_template', ''),
-        template_2=s.get('message_template_2', ''),
-        template_3=text,
-        broadcast_mode=s.get('broadcast_mode', 1),
-        limit=s['daily_limit'],
-        min_delay=s.get('min_delay', 30),
-        max_delay=s.get('max_delay', 60),
-        cycle_delay=s.get('cycle_delay_seconds', 120)
-    )
-    await event.edit("📝 **Шаблон 3 сохранён!**")
-    log("Шаблон 3 обновлён через команду.")
-
-@client.on(events.NewMessage(outgoing=True, pattern=r'\.dual (on|off)'))
-async def cmd_dual(event):
-    state = event.pattern_match.group(1).lower()
-    enable = (state == 'on')
-
-    s = await database.get_settings()
-    new_mode = 2 if enable else 1
-    await database.update_settings(
-        template=s.get('message_template', ''),
-        template_2=s.get('message_template_2', ''),
-        template_3=s.get('message_template_3', ''),
-        broadcast_mode=new_mode,
-        limit=s['daily_limit'],
-        min_delay=s.get('min_delay', 30),
-        max_delay=s.get('max_delay', 60),
-        cycle_delay=s.get('cycle_delay_seconds', 120)
-    )
-    status_text = "включён" if enable else "выключен"
-    await event.edit(f"🔄 **Двойной режим {status_text}!**")
-    log(f"Двойной режим {status_text} через команду.")
-
-@client.on(events.NewMessage(outgoing=True, pattern=r'\.mode ([123])'))
-async def cmd_mode(event):
-    mode = int(event.pattern_match.group(1))
-    s = await database.get_settings()
-    await database.update_settings(
-        template=s.get('message_template', ''),
-        template_2=s.get('message_template_2', ''),
-        template_3=s.get('message_template_3', ''),
-        broadcast_mode=mode,
-        limit=s['daily_limit'],
-        min_delay=s.get('min_delay', 30),
-        max_delay=s.get('max_delay', 60),
-        cycle_delay=s.get('cycle_delay_seconds', 120)
-    )
-    mode_names = {1: "Одиночный", 2: "Двойной", 3: "Тройной"}
-    web_server.bot_state["cycle_index"] = 0  # Reset cycle on mode change
-    await event.edit(f"🔄 **Режим переключен: {mode_names.get(mode, mode)}!**")
-    log(f"Режим рассылки изменён на {mode} через команду.")
-
-@client.on(events.NewMessage(outgoing=True, pattern=r'\.list'))
-async def cmd_list(event):
-    chats = await database.get_chats()
-    if not chats:
-        await event.edit("Список чатов пуст.")
-        return
-
-    msg = ["📋 **Сохранённые чаты:**"]
-    for i, c in enumerate(chats, 1):
-        status = c['status']
-        icon = "✅" if status == 'active' else "⚠️" if status == 'muted' else "❌"
-        msg.append(f"{i}. {icon} {c['chat_title']} `{c['chat_id']}`")
-
-    await event.edit("\n".join(msg))
-
-@client.on(events.NewMessage(outgoing=True, pattern=r'\.start'))
-async def cmd_start(event):
-    await database.set_running_status(True)
-    await event.edit("🚀 **Рассылка запущена!**")
-    log("Рассылка запущена вручную.")
-
-@client.on(events.NewMessage(outgoing=True, pattern=r'\.stop'))
-async def cmd_stop(event):
-    await database.set_running_status(False)
-    await event.edit("🛑 **Рассылка остановлена!**")
-    log("Рассылка остановлена вручную.")
-
-# --- Broadcast Loop ---
-
-async def broadcast_loop():
-    logger.info("Запуск цикла рассылки...")
-
-    # Fetch User ID for Anti-Spam checks
-    me = await client.get_me()
-    my_id = me.id if me else None
-    if not my_id:
-        log("⚠️ Цикл рассылки запущен без 'my_id' (анти-дубль недоступен).")
-
-    # cycle_index is stored in web_server.bot_state so it persists across loop iterations
-    # and is accessible/resettable via Telegram commands
+async def worker_loop() -> None:
+    _log("Worker loop started")
+    client_paused = False
 
     while True:
         try:
             settings = await database.get_settings()
-            if not settings['is_running']:
-                log("⏸ Бот на паузе...")
+            if not bool(settings.get("is_running", 0)):
+                if client.is_connected and not client_paused:
+                    await client.stop()
+                    client_paused = True
+                    _log("Клиент остановлен на паузе")
+                await asyncio.sleep(2)
+                continue
+
+            if (client_paused or not client.is_connected):
+                await client.start()
+                client_paused = False
+                _log("Клиент запущен после паузы")
+
+            chats = [c for c in await database.get_chats() if c.get("status", "active") == "active"]
+            if not chats:
+                _log("Нет активных чатов для рассылки")
                 await asyncio.sleep(5)
                 continue
 
-            # Check Limit
-            daily_limit = settings['daily_limit']
-
-            # Reset Check
-            now_kyiv = datetime.now(TZ_KYIV)
-            last_reset_str = await database.get_stat('last_reset_date')
-            today_str = now_kyiv.strftime('%Y-%m-%d')
-
-            if last_reset_str != today_str:
-                await database.update_stat('daily_sent', "0")
-                await database.update_stat('last_reset_date', today_str)
-                log(f"📅 Новый день! Дневной лимит сброшен. ({today_str})")
-
-            total_sent_today = int(await database.get_stat('daily_sent') or 0)
-
-            # FIX: Check limit dynamically inside the loop, not just once at start
-            if total_sent_today >= daily_limit:
-                # Re-check limit from DB in case user increased it
-                settings = await database.get_settings()
-                daily_limit = settings['daily_limit']
-                
-                if total_sent_today >= daily_limit:
-                    log(f"🛑 Дневной лимит достигнут ({total_sent_today}/{daily_limit}). Пауза 60с...")
-                    await asyncio.sleep(60)
-                    continue
-                else:
-                    log(f"✅ Лимит увеличен! Продолжаю... ({total_sent_today}/{daily_limit})")
-
-            # Get Chats
-            chats = await database.get_chats()
-            if not chats:
-                log("В БД нет чатов. Пауза 60с...")
-                await asyncio.sleep(60)
+            cycle_index = int(web_server.bot_state.get("cycle_index", 0) or 0)
+            template = _resolve_template(settings, cycle_index)
+            if not template.strip():
+                _log("Шаблон сообщения пустой, цикл пропущен")
+                await asyncio.sleep(5)
                 continue
 
-            active_chats = [c for c in chats if c['status'] != 'error']
-            if not active_chats:
-                log("Нет доступных активных чатов. Пауза 60с...")
-                await asyncio.sleep(60)
-                continue
+            media_path = await database.get_media_path()
+            random.shuffle(chats)
 
-            random.shuffle(active_chats)
+            sent = 0
+            failed = 0
 
-            # Determine text for this cycle
-            broadcast_mode = int(settings.get('broadcast_mode', 1))
-            template_1 = settings.get('message_template', '') or ""
-            template_2 = settings.get('message_template_2', '') or ""
-            template_3 = settings.get('message_template_3', '') or ""
+            for row in chats:
+                if not await _is_running():
+                    _log("Рассылка поставлена на паузу")
+                    break
 
-            cycle_index = web_server.bot_state["cycle_index"]
-            mode_names = {1: "Single", 2: "Dual", 3: "Triple"}
-            log(f"⚙️ Конфиг: Режим={mode_names.get(broadcast_mode, broadcast_mode)} | cycle_index={cycle_index}")
-            log(f"📝 Шаблоны: T1={len(template_1)}ч | T2={len(template_2)}ч | T3={len(template_3)}ч")
+                chat_id = int(row["chat_id"])
+                min_delay, max_delay = _resolve_chat_delays(row, settings)
 
-            if broadcast_mode == 3:
-                slot = cycle_index % 3
-                slots = [template_1, template_2, template_3]
-                template_to_use = slots[slot]
-                log(f"{slot + 1}️⃣ Triple режим — отправка шаблона №{slot + 1}")
-            elif broadcast_mode == 2:
-                slot = cycle_index % 2
-                template_to_use = template_1 if slot == 0 else template_2
-                log(f"{slot + 1}️⃣ Dual режим — отправка шаблона №{slot + 1}")
-            else:
-                template_to_use = template_1
-                log("1️⃣ Single режим — отправка шаблона №1")
+                ok = await send_message_with_anti_spam(
+                    client=client,
+                    chat_id=chat_id,
+                    text=template,
+                    media_path=media_path,
+                    min_delay=min_delay,
+                    max_delay=max_delay,
+                    should_continue=_is_running,
+                )
 
-            if not template_to_use:
-                log(f"⚠️ Активный шаблон пуст (cycle_index={cycle_index})!")
-                if broadcast_mode >= 2:
-                    web_server.bot_state["cycle_index"] += 1
-                    log(f"🔄 Переключено на следующий шаблон (index={web_server.bot_state['cycle_index']}).")
-                    await asyncio.sleep(5)
+                if ok:
+                    sent += 1
+                    await database.update_chat_status(chat_id, "active", last_error=None)
                 else:
-                    await asyncio.sleep(60)
-                continue
+                    failed += 1
 
-            consecutive_errors = 0
+            if sent:
+                total_sent = int(await database.get_stat("total_sent") or 0) + sent
+                daily_sent = int(await database.get_stat("daily_sent") or 0) + sent
+                await database.update_stat("total_sent", str(total_sent))
+                await database.update_stat("daily_sent", str(daily_sent))
+                if not await database.get_stat("start_date"):
+                    await database.update_stat("start_date", datetime.now(TZ_KYIV).isoformat())
 
-            # Process chats
-            for chat_row in active_chats:
-                # Re-check settings inside loop (for stop command or limit change)
-                settings = await database.get_settings()
-                if not settings['is_running']:
-                    break
-                
-                # Check limit inside inner loop too
-                total_sent_today = int(await database.get_stat('daily_sent') or 0)
-                if total_sent_today >= settings['daily_limit']:
-                    log(f"🛑 Дневной лимит достигнут в цикле ({total_sent_today}/{settings['daily_limit']}). Ставлю паузу...")
-                    break
+            _log(f"Цикл завершен: отправлено {sent}, ошибок {failed}")
+            web_server.bot_state["cycle_index"] = cycle_index + 1
 
-                chat_id = chat_row['chat_id']
-                chat_title = chat_row['chat_title']
+            cycle_delay = int(settings.get("cycle_delay_seconds", 120) or 120)
+            await _sleep_with_pause_check(cycle_delay)
 
-                # --- Anti-Double-Post Protection (Global) ---
-                if my_id:
-                    try:
-                        messages = await client.get_messages(chat_id, limit=1)
-                        if messages and messages[0].sender_id == my_id:
-                            log(f"✋ Пропуск {chat_title}: последнее сообщение моё")
-                            continue
-                    except Exception as e:
-                        # If we can't read history (e.g. private channel), just proceed safe
-                        # log(f"Could not check history for {chat_title}: {e}")
-                        pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("Worker loop error: %s", exc)
+            await asyncio.sleep(3)
 
-                # Check Mute logic
-                if chat_row['next_run_at']:
-                    next_run_val = chat_row['next_run_at']
-                    if next_run_val:
-                        try:
-                            # Parse date logic...
-                            if isinstance(next_run_val, str):
-                                next_run = datetime.fromisoformat(next_run_val)
-                            elif isinstance(next_run_val, (int, float)):
-                                next_run = datetime.fromtimestamp(next_run_val)
-                            else:
-                                next_run = next_run_val
 
-                            current_dt = datetime.now(next_run.tzinfo) if next_run.tzinfo else datetime.now()
-
-                            if current_dt < next_run:
-                                continue
-                            else:
-                                await database.update_chat_status(chat_id, 'active', None, None)
-                        except Exception as e:
-                            logger.error(f"Ошибка разбора даты для {chat_id}: {e}")
-
-                # Check Cooldown
-                cooldown_until = await database.get_chat_cooldown(chat_id)
-                if cooldown_until:
-                    try:
-                        # cooldown_until might be stored as string or int
-                        if isinstance(cooldown_until, str):
-                            cd_dt = datetime.fromisoformat(cooldown_until)
-                        elif isinstance(cooldown_until, (int, float)):
-                            cd_dt = datetime.fromtimestamp(cooldown_until)
-                        else:
-                            cd_dt = cooldown_until
-
-                        # Ensure timezone awareness compatibility
-                        current_dt = datetime.now(cd_dt.tzinfo) if cd_dt.tzinfo else datetime.now()
-
-                        if current_dt < cd_dt:
-                            log(f"⏳ Пропуск {chat_title} (кулдаун активен до {cd_dt})")
-                            continue
-                    except Exception as e:
-                        logger.error(f"Ошибка разбора cooldown для {chat_id}: {e}")
-
-                text = spintax.process_spintax(template_to_use)
-
-                # Get Media
-                media_path = await database.get_media_path()
-                has_media = False
-                if media_path and os.path.exists(media_path):
-                    has_media = True
-
-                try:
-                    log(f"📢 Обработка: {chat_title}")
-
-                    # 1. Human-Like: Mark as Read
-                    await client.send_read_acknowledge(chat_id)
-
-                    async with client.action(chat_id, 'typing'):
-                        await asyncio.sleep(random.randint(2, 5))
-
-                    if has_media:
-                        await client.send_message(chat_id, text, file=media_path, parse_mode='html', link_preview=True)
-                    else:
-                        await client.send_message(chat_id, text, parse_mode='html', link_preview=True)
-
-                    log(f"✅ Отправлено в: {chat_title}")
-
-                    # Update Stats
-                    total_sent_today += 1
-                    total_sent_all = int(await database.get_stat('total_sent') or 0) + 1
-                    await database.update_stat('daily_sent', total_sent_today)
-                    await database.update_stat('total_sent', total_sent_all)
-
-                    consecutive_errors = 0
-
-                    # 2. Schedule Delay (Normal)
-                    if chat_row.get('is_custom'):
-                        min_d = chat_row.get('custom_min_delay', 30)
-                        max_d = chat_row.get('custom_max_delay', 60)
-                        # Ensure safe values
-                        min_d = min_d if min_d and min_d > 0 else 30
-                        max_d = max_d if max_d and max_d > 0 else 60
-                        if min_d > max_d: min_d, max_d = max_d, min_d
-                        log(f"⏰ Кастомное расписание для {chat_title}: {min_d}-{max_d}с")
-                    else:
-                        min_d = settings.get('min_delay', 30)
-                        max_d = settings.get('max_delay', 60)
-
-                    delay_seconds = random.randint(min_d, max_d)
-
-                    gc.collect()
-
-                    log(f"⏳ Пауза {delay_seconds}с...")
-                    await asyncio.sleep(delay_seconds)
-
-                except FloodWaitError as e:
-                    log(f"🌊 FLOOD WAIT ({chat_title}): {e.seconds}с. Добавляю кулдаун чата.")
-                    # Set cooldown for this specific chat
-                    cooldown_time = datetime.now().timestamp() + e.seconds + 3
-                    await database.set_chat_cooldown(chat_id, cooldown_time)
-                    await asyncio.sleep(random.randint(2, 5))
-
-                except (PeerIdInvalidError, ChatWriteForbiddenError, UserBannedInChannelError) as e:
-                    log(f"❌ Бан/невалидный чат ({chat_title}). Удаляю...")
-                    try:
-                        await client.delete_dialog(chat_id)
-                    except:
-                        pass
-                    await database.remove_chat(chat_id)
-                    consecutive_errors += 1
-
-                except SlowModeWaitError as e:
-                    log(f"🐌 Slowmode ({chat_title}): ожидание {e.seconds}с. Добавляю кулдаун чата.")
-                    cooldown_time = datetime.now().timestamp() + e.seconds + 3
-                    await database.set_chat_cooldown(chat_id, cooldown_time)
-
-                except ChatRestrictedError:
-                    log(f"🔇 Ограничения ({chat_title}). Ставлю паузу на 2ч.")
-                    next_run = datetime.now().timestamp() + 7200
-                    next_run_dt = datetime.fromtimestamp(next_run)
-                    await database.update_chat_status(chat_id, 'muted', next_run_at=next_run_dt, last_error="Ограничение")
-
-                except Exception as e:
-                    log(f"⚠️ Ошибка отправки в {chat_title}: {e}")
-                    await database.update_chat_status(chat_id, 'active', last_error=str(e))
-                    consecutive_errors += 1
-                    await asyncio.sleep(5)
-
-                if consecutive_errors >= 5:
-                    log("🚨 Слишком много ошибок подряд! Защитная пауза 10 минут...")
-                    await asyncio.sleep(600)
-                    consecutive_errors = 0
-                    break
-
-            # End of list cycle — advance cycle_index for multi-template modes
-            if broadcast_mode >= 2:
-                web_server.bot_state["cycle_index"] += 1
-                log(f"🔄 Цикл завершён. cycle_index={web_server.bot_state['cycle_index']}")
-
-            cycle_delay = settings.get('cycle_delay_seconds', 120)
-            log(f"🏁 Конец цикла. Пауза {cycle_delay}с...")
-            await asyncio.sleep(cycle_delay)
-
-        except Exception as e:
-            logger.error(f"Критическая ошибка цикла: {e}", exc_info=True)
-            await asyncio.sleep(60)
-
-# --- Telethon Background Task ---
-
-async def init_telethon():
-    try:
-        await client.connect()
-
-        if not await client.is_user_authorized():
-            try:
-                qr_login = await client.qr_login()
-                print("Сессия не найдена. Генерирую QR-код...")
-                qr = qrcode.QRCode()
-                qr.add_data(qr_login.url)
-                qr.print_ascii(invert=True)
-                print("Сканируйте код выше!")
-                await qr_login.wait()
-                print("Вход выполнен!")
-            except SessionPasswordNeededError:
-                print("Включена двухэтапная проверка. Пробую пароль...")
-                if config.PASSWORD:
-                    try:
-                        await client.sign_in(password=config.PASSWORD)
-                        print("Вход выполнен по паролю!")
-                    except PasswordHashInvalidError:
-                        print("❌ CRITICAL: Invalid 2FA password in .env. Please update it and restart.")
-                        return
-                else:
-                    print("ОШИБКА: включена 2FA, но 'PASSWORD' отсутствует в .env!")
-                    return
-            except Exception as e:
-                print(f"Ошибка входа: {e}")
-                return
-
-        log("Telegram-клиент подключен!")
-
-        log("Загружаю диалоги для кэша сущностей...")
-        await client.get_dialogs()
-        log("Диалоги синхронизированы!")
-
-        # Start Broadcast Loop
-        asyncio.create_task(broadcast_loop())
-        
-        # Run Client until disconnected
-        await client.run_until_disconnected()
-
-    except Exception as e:
-        logger.error(f"Ошибка в фоновой задаче Telethon: {e}")
-
-# --- Main Entry ---
-
-async def main():
-    # 1. Init DB
+async def main() -> None:
     await database.init_db()
+    web_server.set_folder_importer(import_folder_from_link)
 
-    # Register Telegram folder import callback for web API.
-    web_server.set_folder_importer(import_folder_chats)
+    if not await initialize_client_connection():
+        return
 
-    # 2. Start Telethon Background Task
-    asyncio.create_task(init_telethon())
+    worker_task = asyncio.create_task(worker_loop(), name="broadcast-worker")
+    server_task = asyncio.create_task(web_server.run_server(), name="web-server")
 
-    # 3. Start Web Server and await it to keep the process running
-    web_task = asyncio.create_task(web_server.run_server())
-    log("Веб-сервер запущен на порту 8080.")
-    await web_task
-
-if __name__ == '__main__':
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Остановка...")
+        await asyncio.gather(worker_task, server_task)
+    except asyncio.CancelledError:
+        raise
+    finally:
+        for task in (worker_task, server_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(worker_task, server_task, return_exceptions=True)
+        await close_client_connection()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
