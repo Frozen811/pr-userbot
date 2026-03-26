@@ -7,13 +7,17 @@ if __package__ is None or __package__ == "":
         sys.path.insert(0, str(repo_root))
 
 from app.client_manager import ClientManager
+from app import config
 
 client = ClientManager.create_client()
 
-print("🔍 Локальная проверка отпечатков клиента...")
-print(f"API ID: {client.api_id}")
-print(f"Device Model: {client.device_model}")
-print(f"System Version: {client.system_version}")
-print(f"App Version: {client.app_version}")
-print(f"System Lang: {getattr(client, 'system_lang_code', 'not supported by this Pyrogram version')}")
-print(f"Proxy: {client.proxy}")
+print("Локальная проверка Telethon-конфигурации...")
+print(f"API ID: {config.API_ID}")
+print(f"API Hash: {config.API_HASH}")
+print(f"Device Model: {config.DEVICE_MODEL}")
+print(f"System Version: {config.SYSTEM_VERSION}")
+print(f"App Version: {config.APP_VERSION}")
+print(f"Lang: {config.LANG_CODE}")
+print(f"System Lang: {config.SYSTEM_LANG_CODE}")
+print(f"Session Path: {config.SESSION_PATH}.session")
+print(f"Proxy: {getattr(client, 'proxy', None)}")

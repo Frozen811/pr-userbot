@@ -11,7 +11,5 @@ unknown_errors.txt
 sessions/
 app/user_session.session
 .gitignore
-deploy.ps1
-deploy.sh
 logs.ps1
 status.ps1

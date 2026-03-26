@@ -1,5 +1,5 @@
 """
-Example usage patterns for Pyrogram userbot with anti-spam features.
+Example usage patterns for Telethon userbot with anti-spam features.
 
 This module demonstrates production-ready usage of all components:
 - Client initialization with device fingerprints

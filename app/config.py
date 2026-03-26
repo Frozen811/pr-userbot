@@ -13,10 +13,10 @@ SYSTEM_VERSION = "Windows 10 x64"
 APP_VERSION = "6.6.2 x64"
 LANG_CODE = "ru"
 SYSTEM_LANG_CODE = "ru-RU"
-LANG_PACK = "tdesktop"
 
 SESSION_DIR = "sessions"
 SESSION_NAME = "user_session"
+SESSION_PATH = os.path.join(SESSION_DIR, SESSION_NAME)
 
 TIMEZONE = "Europe/Kyiv"
 NIGHT_MODE_START = 23
@@ -39,10 +39,11 @@ MIN_READING_DELAY = 2.0
 MAX_READING_DELAY = 5.0
 
 DEVICE_CONFIG = {
+    "api_id": API_ID,
+    "api_hash": API_HASH,
     "device_model": DEVICE_MODEL,
     "system_version": SYSTEM_VERSION,
     "app_version": APP_VERSION,
     "lang_code": LANG_CODE,
     "system_lang_code": SYSTEM_LANG_CODE,
-    "lang_pack": LANG_PACK,
 }

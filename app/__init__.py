@@ -1,5 +1,5 @@
 """
-Pyrogram Userbot Application Package
+Telethon Userbot Application Package
 Production-ready Telegram anti-spam broadcasting system
 """
 

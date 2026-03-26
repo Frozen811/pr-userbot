@@ -8,33 +8,49 @@ import random
 import logging
 from typing import Optional, Callable
 
-from pyrogram.errors import (
-    FloodWait, PeerFlood, ChatWriteForbidden, UserBannedInChannel,
-    ChatRestricted, ChannelPrivate, ChannelInvalid, ChatNotFound,
-    UserNotParticipant, PeerIdInvalid
-)
+from telethon import errors as tg_errors
 
 from app import config
 
 logger = logging.getLogger(__name__)
 
+FloodWaitError = tg_errors.FloodWaitError
+PeerFloodError = getattr(tg_errors, "PeerFloodError", tg_errors.RPCError)
+ChatWriteForbiddenError = getattr(tg_errors, "ChatWriteForbiddenError", tg_errors.RPCError)
+UserBannedInChannelError = getattr(tg_errors, "UserBannedInChannelError", tg_errors.RPCError)
+ChatAdminRequiredError = getattr(tg_errors, "ChatAdminRequiredError", tg_errors.RPCError)
+ChannelPrivateError = getattr(tg_errors, "ChannelPrivateError", tg_errors.RPCError)
+ChannelInvalidError = getattr(tg_errors, "ChannelInvalidError", tg_errors.RPCError)
+ChatIdInvalidError = getattr(tg_errors, "ChatIdInvalidError", tg_errors.RPCError)
+ChatInvalidError = getattr(tg_errors, "ChatInvalidError", tg_errors.RPCError)
+UserNotParticipantError = getattr(tg_errors, "UserNotParticipantError", tg_errors.RPCError)
+PeerIdInvalidError = getattr(tg_errors, "PeerIdInvalidError", tg_errors.RPCError)
+
 
 class TelegramErrorHandler:
     """Handles Telegram API errors with appropriate strategies."""
     
-    RECOVERABLE_ERRORS = (FloodWait, PeerFlood, ChatRestricted)
+    RECOVERABLE_ERRORS = (FloodWaitError, PeerFloodError, ChatAdminRequiredError)
     NON_RECOVERABLE_ERRORS = (
-        ChatWriteForbidden, UserBannedInChannel, ChannelPrivate,
-        ChannelInvalid, ChatNotFound, UserNotParticipant, PeerIdInvalid
+        ChatWriteForbiddenError,
+        UserBannedInChannelError,
+        ChannelPrivateError,
+        ChannelInvalidError,
+        ChatIdInvalidError,
+        ChatInvalidError,
+        UserNotParticipantError,
+        PeerIdInvalidError,
     )
     
     ERROR_MESSAGES = {
-        FloodWait: "FloodWait",
-        PeerFlood: "PeerFlood",
-        ChatWriteForbidden: "ChatWriteForbidden",
-        UserBannedInChannel: "UserBannedInChannel",
-        ChatRestricted: "ChatRestricted",
-        ChannelPrivate: "ChannelPrivate",
+        FloodWaitError: "FloodWait",
+        PeerFloodError: "PeerFlood",
+        ChatWriteForbiddenError: "ChatWriteForbidden",
+        UserBannedInChannelError: "UserBannedInChannel",
+        ChatAdminRequiredError: "ChatRestricted",
+        ChannelPrivateError: "ChannelPrivate",
+        ChatIdInvalidError: "ChatIdInvalid",
+        ChatInvalidError: "ChatInvalid",
     }
     
     @staticmethod
@@ -74,17 +90,18 @@ class TelegramErrorHandler:
             await callback(chat_id)
     
     @staticmethod
-    async def handle_error(error: Exception, chat_id: int = None,
+    async def handle_error(error: Exception, chat_id: Optional[int] = None,
                           remove_callback: Optional[Callable] = None,
                           retry_callback: Optional[Callable] = None) -> bool:
         """Universal error handler routing to specific handlers."""
         error_type = type(error)
         
-        if error_type is FloodWait:
-            await TelegramErrorHandler.handle_floodwait(error.value, retry_callback)
+        if isinstance(error, FloodWaitError):
+            wait_time = int(getattr(error, "seconds", getattr(error, "value", 0) or 0))
+            await TelegramErrorHandler.handle_floodwait(wait_time, retry_callback)
             return True
         
-        if isinstance(error, PeerFlood) and chat_id:
+        if isinstance(error, PeerFloodError) and chat_id:
             await TelegramErrorHandler._handle_permanent_error("PeerFlood", chat_id, remove_callback)
             return True
         

@@ -1,5 +1,4 @@
-pyrogram
-tgcrypto
+telethon>=1.30
 fastapi
 uvicorn
 jinja2

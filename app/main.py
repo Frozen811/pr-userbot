@@ -1,5 +1,5 @@
 """
-Unified runtime for Pyrogram userbot, web panel, and background worker.
+Unified runtime for Telethon userbot, web panel, and background worker.
 """
 
 import asyncio
@@ -11,8 +11,8 @@ from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import pytz
-from pyrogram import Client
-from pyrogram.errors import RPCError
+from telethon import TelegramClient
+from telethon.errors import RPCError
 
 from app import anti_spam, client_manager, config, database, human_behavior, safe_handler, web_server
 
@@ -22,7 +22,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-client: Client = client_manager.ClientManager.create_client()
+client: TelegramClient = client_manager.ClientManager.create_client()
 
 BROADCAST_CHATS: List[int] = []
 FAILED_CHATS: Dict[int, str] = {}
@@ -99,7 +99,7 @@ async def remove_chat_from_broadcast(chat_id: int) -> None:
 
 
 async def send_message_with_anti_spam(
-    client: Client,
+    client: TelegramClient,
     chat_id: int,
     text: str,
     media_path: Optional[str] = None,
@@ -119,7 +119,7 @@ async def send_message_with_anti_spam(
 
     try:
         if media_path and os.path.exists(media_path):
-            await client.send_document(chat_id, media_path, caption=unique_text)
+            await client.send_file(chat_id, media_path, caption=unique_text)
             _log(f"Сообщение отправлено в {chat_id} (с медиа)")
         else:
             await client.send_message(chat_id, unique_text)
@@ -175,19 +175,27 @@ async def broadcast_to_chats(
     return stats
 
 
-async def safe_get_chat_title(client: Client, chat_id: int) -> str:
+async def safe_get_chat_title(client: TelegramClient, chat_id: int) -> str:
     try:
-        chat = await client.get_chat(chat_id)
-        return chat.title or chat.first_name or str(chat_id)
+        chat = await client.get_entity(chat_id)
+        return getattr(chat, "title", None) or getattr(chat, "first_name", None) or str(chat_id)
     except Exception:
         return str(chat_id)
 
 
 async def initialize_client_connection() -> bool:
     try:
-        await client_manager.ClientManager.initialize_client(client)
+        connected = await client_manager.ClientManager.initialize_client(client)
+        if not connected:
+            return False
+
+        if not await client.is_user_authorized():
+            _log("Сессия не авторизована. Запустите скрипт qr_login.py")
+            return False
+
         me = await client.get_me()
-        _log(f"Клиент авторизован: {me.first_name} (@{me.username})")
+        username = f"@{me.username}" if getattr(me, "username", None) else "без username"
+        _log(f"Клиент авторизован: {me.first_name} ({username})")
         return True
     except Exception as exc:
         logger.error("Ошибка инициализации клиента: %s", exc)
@@ -196,8 +204,9 @@ async def initialize_client_connection() -> bool:
 
 async def close_client_connection() -> None:
     try:
-        await client.stop()
-        _log("Клиент остановлен")
+        if client.is_connected():
+            await client.disconnect()
+        _log("Клиент отключен")
     except Exception as exc:
         logger.error("Ошибка при остановке клиента: %s", exc)
 
@@ -229,11 +238,12 @@ async def import_folder_from_link(
     slug = _extract_addlist_slug(url)
 
     try:
-        from pyrogram.raw.functions.chatlists import CheckChatlistInvite, JoinChatlistInvite
+        from telethon.tl.functions.chatlists import CheckChatlistInviteRequest, JoinChatlistInviteRequest
+        from telethon.utils import get_peer_id
     except Exception as exc:
-        raise RuntimeError("Эта версия Pyrogram не поддерживает chatlists API") from exc
+        raise RuntimeError("Эта версия Telethon не поддерживает chatlists API") from exc
 
-    invite = await client.invoke(CheckChatlistInvite(slug=slug))
+    invite = await client(CheckChatlistInviteRequest(slug=slug))
 
     peers = list(getattr(invite, "peers", []) or [])
     chats_raw = list(getattr(invite, "chats", []) or [])
@@ -241,7 +251,7 @@ async def import_folder_from_link(
 
     if peers:
         try:
-            await client.invoke(JoinChatlistInvite(slug=slug, peers=peers))
+            await client(JoinChatlistInviteRequest(slug=slug, peers=peers))
         except Exception as exc:
             # If already joined or partially joined, continue with discovered chats.
             logger.warning("JoinChatlistInvite warning: %s", exc)
@@ -259,14 +269,7 @@ async def import_folder_from_link(
         try:
             raw_id = int(getattr(raw_chat, "id"))
             title = getattr(raw_chat, "title", None) or str(raw_id)
-
-            class_name = raw_chat.__class__.__name__.lower()
-            if "channel" in class_name:
-                chat_id = int(f"-100{raw_id}")
-            elif "chat" in class_name:
-                chat_id = -raw_id
-            else:
-                chat_id = raw_id
+            chat_id = int(get_peer_id(raw_chat))
 
             if chat_id in existing:
                 duplicates += 1
@@ -350,17 +353,17 @@ async def worker_loop() -> None:
         try:
             settings = await database.get_settings()
             if not bool(settings.get("is_running", 0)):
-                if client.is_connected and not client_paused:
-                    await client.stop()
+                if client.is_connected() and not client_paused:
+                    await client.disconnect()
                     client_paused = True
-                    _log("Клиент остановлен на паузе")
+                    _log("Клиент отключен на паузе")
                 await asyncio.sleep(2)
                 continue
 
-            if (client_paused or not client.is_connected):
-                await client.start()
+            if (client_paused or not client.is_connected()):
+                await client.connect()
                 client_paused = False
-                _log("Клиент запущен после паузы")
+                _log("Клиент подключен после паузы")
 
             chats = [c for c in await database.get_chats() if c.get("status", "active") == "active"]
             if not chats:

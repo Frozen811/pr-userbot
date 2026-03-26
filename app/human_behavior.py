@@ -9,8 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import pytz
-from pyrogram import Client
-from pyrogram.types import ChatAction
+from telethon import TelegramClient
 
 from app import config
 
@@ -29,14 +28,14 @@ class HumanBehaviorSimulator:
     """Simulates human-like behavior patterns to evade bot detection."""
     
     @staticmethod
-    async def random_delay(min_delay: float = None, max_delay: float = None):
+    async def random_delay(min_delay: Optional[float] = None, max_delay: Optional[float] = None):
         """Applies random delay within bounds."""
         min_delay = _get_default_param(min_delay, config.MIN_DELAY)
         max_delay = _get_default_param(max_delay, config.MAX_DELAY)
         await asyncio.sleep(random.uniform(min_delay, max_delay))
     
     @staticmethod
-    async def simulate_typing(client: Client, chat_id: int, text: str, typing_speed_wpm: int = None):
+    async def simulate_typing(client: TelegramClient, chat_id: int, text: str, typing_speed_wpm: Optional[int] = None):
         """Sends typing indicator with duration based on text length."""
         typing_speed_wpm = _get_default_param(typing_speed_wpm, config.TYPING_SPEED_WPM)
         
@@ -45,14 +44,12 @@ class HumanBehaviorSimulator:
         typing_duration = max(1.0, min(typing_duration, 30.0))
         
         try:
-            await client.send_chat_action(chat_id, ChatAction.TYPING)
-            
             typing_segments = max(1, int(typing_duration / 5))
             segment_duration = typing_duration / typing_segments
             
             for _ in range(typing_segments):
-                await asyncio.sleep(segment_duration)
-                await client.send_chat_action(chat_id, ChatAction.TYPING)
+                async with client.action(chat_id, "typing"):
+                    await asyncio.sleep(segment_duration)
         except Exception:
             pass
     
@@ -67,17 +64,17 @@ class HumanBehaviorSimulator:
         await asyncio.sleep(adjusted_duration)
     
     @staticmethod
-    async def simulate_activity(client: Client, chat_id: int):
+    async def simulate_activity(client: TelegramClient, chat_id: int):
         """Simulates general account activity."""
         try:
-            actions = [ChatAction.TYPING, ChatAction.RECORD_VIDEO, ChatAction.RECORD_AUDIO]
-            await client.send_chat_action(chat_id, random.choice(actions))
-            await asyncio.sleep(random.uniform(1, 3))
+            actions = ["typing", "record-video", "record-audio"]
+            async with client.action(chat_id, random.choice(actions)):
+                await asyncio.sleep(random.uniform(1, 3))
         except Exception:
             pass
     
     @staticmethod
-    async def sleep_after_broadcast(min_sleep: int = None, max_sleep: int = None):
+    async def sleep_after_broadcast(min_sleep: Optional[int] = None, max_sleep: Optional[int] = None):
         """Long sleep after broadcast completion."""
         min_sleep = _get_default_param(min_sleep, config.SLEEP_AFTER_BROADCAST_MIN)
         max_sleep = _get_default_param(max_sleep, config.SLEEP_AFTER_BROADCAST_MAX)
@@ -107,18 +104,18 @@ class HumanBehaviorSimulator:
             await asyncio.sleep(sleep_seconds)
     
     @staticmethod
-    async def enforce_night_mode(tz_name: str = config.TIMEZONE, client: Optional[Client] = None) -> bool:
+    async def enforce_night_mode(tz_name: str = config.TIMEZONE, client: Optional[TelegramClient] = None) -> bool:
         """Enforces night mode sleep if needed."""
         if HumanBehaviorSimulator.is_night_time(tz_name):
             stopped_for_night = False
-            if client is not None and client.is_connected:
-                await client.stop()
+            if client is not None and client.is_connected():
+                await client.disconnect()
                 stopped_for_night = True
 
             await HumanBehaviorSimulator.sleep_until_morning(tz_name)
 
-            if client is not None and stopped_for_night and not client.is_connected:
-                await client.start()
+            if client is not None and stopped_for_night and not client.is_connected():
+                await client.connect()
             return True
         return False
     
@@ -132,7 +129,7 @@ class HumanBehaviorSimulator:
             await asyncio.sleep(60)
     
     @staticmethod
-    async def simulate_pre_send_activity(client: Client, chat_id: int, text: str):
+    async def simulate_pre_send_activity(client: TelegramClient, chat_id: int, text: str):
         """Pre-send activity: reading + typing."""
         await HumanBehaviorSimulator.simulate_reading(text)
         await HumanBehaviorSimulator.simulate_typing(client, chat_id, text)
