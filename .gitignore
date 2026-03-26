@@ -1,6 +1,0 @@
-.venv/
-.idea/
-*.log
-__pycache__/
-.gitignore
-unknown_errors.txt
