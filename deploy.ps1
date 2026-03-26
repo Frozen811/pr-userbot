@@ -5,7 +5,7 @@ $ServerIP     = "100.109.41.95"
 $RemoteUser   = "extreme"
 $Password     = "ext1"
 $BotPath      = "/home/extreme/bot_rass"
-$ServiceName  = "tg-bot"  # Проверь, что твоя служба называется именно так
+$ServiceName = "bot_rass"  # Проверь, что твоя служба называется именно так
 $Branch       = "main"
 # ---------------------------
 
