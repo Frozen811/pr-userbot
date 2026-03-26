@@ -105,7 +105,7 @@ async def dashboard(request: Request):
     global_max = settings.get('max_delay', 60)
     is_running = bool(settings.get('is_running', 0))
 
-    return templates.TemplateResponse("index.html", {
+    return templates.TemplateResponse(request=request, name="index.html", context={
         "request": request,
         "tab": "dashboard",
         "stats": stats,
@@ -161,7 +161,7 @@ async def api_remove_custom_chat(data: RemoveCustomChatRequest):
 
 @app.get("/logs", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
 async def logs(request: Request):
-    return templates.TemplateResponse("index.html", {
+    return templates.TemplateResponse(request=request, name="index.html", context={
         "request": request,
         "tab": "logs",
         "logs": list(log_buffer)
@@ -170,7 +170,7 @@ async def logs(request: Request):
 @app.get("/chats", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
 async def chats(request: Request):
     chat_list = await database.get_chats()
-    return templates.TemplateResponse("index.html", {
+    return templates.TemplateResponse(request=request, name="index.html", context={
         "request": request,
         "tab": "chats",
         "chats": chat_list
@@ -184,7 +184,7 @@ async def delete_chat(chat_id: int = Form(...)):
 @app.get("/config", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
 async def config_page(request: Request):
     conf = await database.get_settings()
-    return templates.TemplateResponse("index.html", {
+    return templates.TemplateResponse(request=request, name="index.html", context={
         "request": request,
         "tab": "config",
         "config": conf
@@ -193,7 +193,7 @@ async def config_page(request: Request):
 
 @app.get("/import-folders", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
 async def import_folders_page(request: Request):
-    return templates.TemplateResponse("index.html", {
+    return templates.TemplateResponse(request=request, name="index.html", context={
         "request": request,
         "tab": "import_folders"
     })
