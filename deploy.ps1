@@ -24,7 +24,18 @@ scp .env "${RemoteUser}@${ServerIP}:${BotPath}/.env"
 
 Write-Host ">>> 3) Updating and restarting on $ServerIP..." -ForegroundColor Cyan
 
-$RemoteCmd = "cd $BotPath && git fetch --all && git reset --hard origin/$Branch && source venv/bin/activate && pip install -r requirements.txt && echo '$Password' | sudo -S systemctl restart $ServiceName"
+# Передаём пароль через переменную окружения, чтобы не интерполировался на Windows
+# Используем bash -c явно, чтобы source работал корректно
+$RemoteCmd = @"
+set -e
+cd $BotPath
+git fetch --all
+git reset --hard origin/$Branch
+bash -c 'source venv/bin/activate && pip install -q -r requirements.txt'
+echo '$Password' | sudo -S systemctl restart $ServiceName
+sleep 2
+systemctl is-active $ServiceName && echo 'SERVICE IS RUNNING OK' || echo 'SERVICE FAILED!'
+"@
 
 ssh ${RemoteUser}@${ServerIP} $RemoteCmd
 
