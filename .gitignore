@@ -1,15 +1,6 @@
-__pycache__/
-*.session
-*.session-journal
-.env
-.env.*
-app/data/*.db
 .venv/
 .idea/
 *.log
-unknown_errors.txt
-sessions/
-app/user_session.session
+__pycache__/
 .gitignore
-logs.ps1
-status.ps1
+unknown_errors.txt
